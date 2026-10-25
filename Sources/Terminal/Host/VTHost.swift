@@ -21,6 +21,8 @@ public final class VTHost: @unchecked Sendable {
         /// nmux's.
         var clipboardWrite: @Sendable (String) -> Void
         var clipboardRead: @Sendable () -> Void
+        /// On the reader thread, with the lock held, for each BEL.
+        var bell: @Sendable () -> Void
 #if NMUX_SELFTEST
         /// On the reader thread, with the lock held, when a mode 2026 hold begins or ends.
         var hold: @Sendable (Bool) -> Void = { _ in }
@@ -42,23 +44,30 @@ public final class VTHost: @unchecked Sendable {
     /// callback; nmux drops that OSC 52 reply, so a read answers later or never, as Ghostty's. The flag ends with the
     /// parsed chunk.
     private var dropReply = false
+    /// The client's tty, the name tmux knows it by; each restart takes a new pty. `restart` runs on the main thread, so
+    /// read it there.
+    public private(set) var tty: String
     /// The write lock guards the pty: every write, the resize's ioctl and the close, after which fd is -1.
     private let writeLock = NSLock()
     private var fd: Int32
-    private let pid: pid_t
+    /// `restart` replaces the client only once the reader has ended, so the reader reads them unlocked.
+    private var pid: pid_t
+    /// Whether the client runs, on the main thread: false from the exit handler on, true again after `restart`.
+    public private(set) var running = true
     /// A write over 64 KB goes to the writer queue, and every write after it while one is queued, so they keep their
     /// order and a large paste never blocks the main thread. The queue lock guards the count, and is held across a
     /// write made at once, so a later large write never starts before it.
     private let writer = DispatchQueue(label: "nmux.vthost.writer")
     private let queueLock = NSLock()
     private var queued = 0
+    private let argv: [String]
     /// The XTVERSION reply, alive as long as the host; an empty one leaves libghostty-vt's own, `libghostty`.
     private let xtversion: UnsafeMutableBufferPointer<UInt8>
 
     /// Starts `argv` on a new pty of `grid` cells of `cell`, with TMUX unset, as the pty's controlling terminal;
     /// `xtversion` is the terminal's answer to XTVERSION.
     init(argv: [String], grid: Grid, cell: Cell, handlers: Handlers, xtversion: String = "") throws(VTHostError) {
-        self.handlers = handlers
+        (self.argv, self.handlers) = (argv, handlers)
         size = GhosttySizeReportSize(rows: UInt16(grid.rows), columns: UInt16(grid.cols),
                                      cell_width: UInt32(cell.width), cell_height: UInt32(cell.height))
         var made: GhosttyTerminal?
@@ -66,7 +75,7 @@ public final class VTHost: @unchecked Sendable {
             throw .terminal
         }
         do {
-            (fd, pid) = try spawn(argv, size: winsize(size))
+            (fd, pid, tty) = try spawn(argv, size: winsize(size))
         } catch {
             ghostty_terminal_free(made)
             throw error
@@ -87,6 +96,20 @@ public final class VTHost: @unchecked Sendable {
 
     /// Starts reading the client's output.
     public func start() { Thread.detachNewThread { [self] in read() } }
+
+    /// Starts the client again on a new pty at the terminal's size, keeping the terminal and its scrollback; call it
+    /// only after the exit handler ran.
+    public func restart() throws(VTHostError) {
+        let ws = locked { _ in winsize(size) }
+        let (fd, pid, tty) = try spawn(argv, size: ws)
+        writeLock.lock()
+        precondition(self.fd < 0, "restart while the client runs")
+        (self.fd, self.tty) = (fd, tty)
+        writeLock.unlock()
+        self.pid = pid
+        running = true
+        start()
+    }
 
     private func configure() {
         set(GHOSTTY_TERMINAL_OPT_USERDATA, Unmanaged.passUnretained(self).toOpaque())
@@ -147,13 +170,15 @@ public final class VTHost: @unchecked Sendable {
             h.dropReply = true
             if request?.pointee.location == GHOSTTY_CLIPBOARD_LOCATION_STANDARD { h.handlers.clipboardRead() }
         }
-        set(GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, unsafeBitCast(clipboardWrite, to: UnsafeRawPointer.self))
-        set(GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ, unsafeBitCast(clipboardRead, to: UnsafeRawPointer.self))
+        let bell: GhosttyTerminalBellFn = { _, ud in host(ud).handlers.bell() }
         let version: GhosttyTerminalXtversionFn = { _, ud in
             let v = host(ud).xtversion
             return GhosttyString(ptr: v.baseAddress, len: v.count)
         }
         set(GHOSTTY_TERMINAL_OPT_XTVERSION, unsafeBitCast(version, to: UnsafeRawPointer.self))
+        set(GHOSTTY_TERMINAL_OPT_BELL, unsafeBitCast(bell, to: UnsafeRawPointer.self))
+        set(GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, unsafeBitCast(clipboardWrite, to: UnsafeRawPointer.self))
+        set(GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ, unsafeBitCast(clipboardRead, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_WRITE_PTY, unsafeBitCast(writePty, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_SIZE, unsafeBitCast(size, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))
@@ -242,7 +267,10 @@ public final class VTHost: @unchecked Sendable {
         fd = -1
         writeLock.unlock()
         let output = String(decoding: tail, as: UTF8.self)
-        onMain { [exit = handlers.exit, status] in exit(status, output) }
+        onMain { [self, exit = handlers.exit, status] in
+            running = false
+            exit(status, output)
+        }
     }
 
     /// Writes `bytes` to the client, from any thread: at once, unless it is over 64 KB or a write waits on the writer
@@ -385,7 +413,7 @@ private func winsize(_ s: GhosttySizeReportSize) -> winsize {
 
 /// forkpty makes the pty the child's controlling terminal (setsid and TIOCSCTTY), which posix_spawn cannot; the
 /// child only calls execve on what was built before the fork.
-private func spawn(_ args: [String], size: winsize) throws(VTHostError) -> (Int32, pid_t) {
+private func spawn(_ args: [String], size: winsize) throws(VTHostError) -> (Int32, pid_t, String) {
     var env = ProcessInfo.processInfo.environment
     env["TMUX"] = nil
     env["TERM"] = "xterm-256color"
@@ -402,5 +430,7 @@ private func spawn(_ args: [String], size: winsize) throws(VTHostError) -> (Int3
     guard pid > 0 else { throw .forkpty(errno: errno) }
     // Every later client would inherit this pty, and keep it open after its own Session ends.
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
-    return (fd, pid)
+    var name = [CChar](repeating: 0, count: 128)
+    return (fd, pid, ptsname_r(fd, &name, name.count) == 0
+                         ? String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) : "")
 }

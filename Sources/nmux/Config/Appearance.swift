@@ -1,15 +1,15 @@
 import AppKit
 import Terminal
 
-/// What an apply reaches: the window and the terminal.
+/// What an apply reaches: the window and every Session's terminal.
 protocol AppearanceHost: AnyObject {
     var window: NSWindow? { get }
     var terminals: [TerminalView] { get }
 }
 
 /// The Fallback look for the window's appearance and SF Mono, and the one apply that puts the colours on screen: at
-/// launch before the first Session and on a switch of the appearance. Content, selection, scroll, marked text and an
-/// open prompt stay.
+/// launch before the first Session and on a switch of the appearance. Content, selection, scroll, marked text, the
+/// shown Session and an open prompt stay.
 final class Appearance {
     weak var host: AppearanceHost?
     /// The colours in force, for the appearance they were resolved for.

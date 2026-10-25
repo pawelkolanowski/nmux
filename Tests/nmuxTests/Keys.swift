@@ -18,6 +18,19 @@ private let leftShift = NSEvent.ModifierFlags(
     rawValue: NSEvent.ModifierFlags.shift.rawValue | UInt(NX_DEVICELSHIFTKEYMASK))
 
 struct KeyTests {
+    @Test("Cmd+Shift+[ and ] go to the previous and next Session") func cmdShiftAndGoToThePreviousAnd() {
+        #expect(shortcut("[", [.command, .shift])?.action == .previousSession)
+        #expect(shortcut("]", [.command, .shift])?.action == .nextSession)
+    }
+
+    @Test("Cmd+1 to Cmd+8 go to their Session", arguments: 1...8) func cmdNumberGoesToItsSession(number: Int) {
+        #expect(shortcut("\(number)", .command)?.action == .session(number))
+    }
+
+    @Test("Cmd+9 goes to the last Session") func cmd9GoesToTheLastSession() {
+        #expect(shortcut("9", .command)?.action == .lastSession)
+    }
+
     @Test("Cmd+K, Cmd+C, Cmd+V, Cmd+A and Cmd+Q are the app's") func cmdKCmdCCmdVCmdA() {
         #expect(["k", "c", "v", "a", "q"].compactMap { shortcut($0, .command)?.action }
             == [.clear, .copy, .paste, .selectAll, .quit])
@@ -28,16 +41,18 @@ struct KeyTests {
     }
 
     @Test("a shortcut needs exactly its mods") func aShortcutNeedsExactlyItsMods() {
-        #expect(shortcut("k", [.command, .option]) == nil)
-        #expect(shortcut("k", []) == nil)
+        #expect(shortcut("1", [.command, .option]) == nil)
+        #expect(shortcut("1", []) == nil)
     }
 
     @Test("Caps Lock does not stop a shortcut") func capsLockDoesNotStopAShortcut() {
-        #expect(shortcut("k", [.command, .capsLock])?.action == .clear)
+        #expect(shortcut("1", [.command, .capsLock])?.action == .session(1))
     }
 
     @Test("the shortcut names are the self-test's") func theShortcutNamesAreTheSelfTests() {
-        #expect(shortcuts.map(\.action.name).joined(separator: " ") == "quit copy paste select-all clear")
+        #expect(shortcuts.map(\.action.name).joined(separator: " ") == "quit copy paste select-all clear "
+            + "previous-session next-session session-1 session-2 session-3 session-4 session-5 session-6 "
+            + "session-7 session-8 last-session")
     }
 
     @Test("Cmd+Left, Cmd+Right and Cmd+Backspace send Ctrl+A, Ctrl+E and Ctrl+U")

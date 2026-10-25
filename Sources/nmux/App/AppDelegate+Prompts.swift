@@ -57,6 +57,8 @@ extension AppDelegate {
     }
 
     /// A clipboard card over the terminal. A card already showing refuses the ask.
+    /// limitation: one card covers the window, whichever Session asked; give each Session its own card once a hidden
+    /// Session's ask misleads.
     func ask(_ ask: ClipboardAsk, _ answer: @escaping (Bool) -> Void) {
         guard card == nil else { return answer(false) }
         clipboardAnswer = answer

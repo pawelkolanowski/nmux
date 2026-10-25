@@ -6,6 +6,7 @@ import AppKit
 /// What an app shortcut does. Its name is the self-test's.
 nonisolated enum AppAction: Hashable, Sendable {
     case quit, copy, paste, selectAll, clear
+    case previousSession, nextSession, session(Int), lastSession
 
     var name: String {
         switch self {
@@ -14,13 +15,17 @@ nonisolated enum AppAction: Hashable, Sendable {
         case .paste: "paste"
         case .selectAll: "select-all"
         case .clear: "clear"
+        case .previousSession: "previous-session"
+        case .nextSession: "next-session"
+        case .session(let n): "session-\(n)"
+        case .lastSession: "last-session"
         }
     }
 }
 
 /// The main menu's menus, in order; the first is the app's own.
 nonisolated enum Menu: String, CaseIterable, Sendable {
-    case nmux, edit = "Edit"
+    case nmux, edit = "Edit", sessions = "Sessions"
 }
 
 /// One app shortcut: the menu it shows in, its title, and its key as the layout types it without modifiers.
@@ -39,7 +44,11 @@ nonisolated let shortcuts: [Shortcut] = [
     Shortcut(menu: .edit, title: "Paste", key: "v", flags: .command, action: .paste),
     Shortcut(menu: .edit, title: "Select All", key: "a", flags: .command, action: .selectAll),
     Shortcut(menu: .edit, title: "Clear", key: "k", flags: .command, action: .clear),
-]
+    Shortcut(menu: .sessions, title: "Previous Session", key: "[", flags: [.command, .shift], action: .previousSession),
+    Shortcut(menu: .sessions, title: "Next Session", key: "]", flags: [.command, .shift], action: .nextSession),
+] + (1...8).map { Shortcut(menu: .sessions, title: "Session \($0)", key: "\($0)", flags: .command,
+                           action: .session($0)) }
+    + [Shortcut(menu: .sessions, title: "Last Session", key: "9", flags: .command, action: .lastSession)]
 
 /// The shortcut a key with these flags makes, matched on its unmodified character and exactly its four modifiers: Caps
 /// Lock, Fn and the keypad flag never count.

@@ -1,5 +1,6 @@
 # Milestone 1, the app shell: runs 1 to 10 and 40.
 
+startedOneControl() { within 3 logged "control started" && oneControl; }
 ptyControls() {
     [ "$(ps -o tty= -p "$(plains "#{client_pid}")" | tr -d " ")" = "$(plains "#{client_tty}" | sed "s#^/dev/##")" ]
 }
@@ -28,6 +29,7 @@ run1() {
     check "the app logs the tmux it found" grep -q "^selftest: tmux /.*/tmux [0-9]" "$LOG"
     check "an empty server gets one Session" is "$(attached)" $T list-sessions -F "#{session_id}"
     check "one plain client is attached to it" within 3 is "$(attached) 0" clients
+    check "and one control client" startedOneControl
     check "the pty is the client's controlling terminal" ptyControls
     # `cell W H baseline B scale S` and `grid C R content W H`, with the x's as spaces.
     cell=$(sed -n "s/^selftest: cell //p" "$LOG" | tr x ' ')
@@ -51,14 +53,22 @@ run1() {
     check "and no client of the app stays on the server" within 3 noClients
 }
 
-# Run 2: of $0 and $1 the client takes $0, and killing that Session ends the app.
+clientsInOrder() { clients | sort | tr "\n" " "; }
+keptList() { within 3 logged 'sessions $1:1' && alive; }
+
+# Run 2: $0 and $1 each get a plain client, $0 first. Killing $0, which the control client sits on too, keeps the
+# app; killing the last one ends it.
 run2() {
-    $T new-session -d \; new-session -d
+    # The server outlives its last Session, so only the app's own rule ends the app.
+    $T new-session -d \; new-session -d \; set -s exit-empty off
     launch 2
-    check "the app attaches to the lowest \$ID" within 10 is '$0' attached
-    check "its client is on \$0" within 3 is '$0 0' clients
+    check "the app attaches to the lowest \$ID first" within 10 is '$0' attached
+    check "and a client to each Session" within 3 is '$0 0 $1 0 ' clientsInOrder
+    within 10 logged "control started"
     $T kill-session -t '$0'
-    check "killing the Session ends the app" ended
+    check "killing the Session the control client sits on keeps the app and its list" keptList
+    $T kill-session -t '$1'
+    check "killing the last Session ends the app" ended
     check "and exits with 0" [ "$status" -eq 0 ]
 }
 
@@ -145,12 +155,24 @@ run8() {
     check "the app quits on SIGTERM" ended
 }
 
-# Run 9: a client that ends with an error shows the client card with the client's last line.
+waits9() { logged "ended $(attached) wait"; }
+
+# Run 9: a Session whose client fails within a second of its start keeps tmux's error on screen, with no card; a key
+# tries again. Only the plain client fails; the control client attaches.
 run9() {
-    fake 9 tmux "case \"\$*\" in *attach-session*) echo 'no attach: boom'; exit 1;; esac; exec $REAL \"\$@\""
-    hidden 9
-    check "a client that fails shows the client card" carded client
-    check "the failure carries the client's error" logged "failure client no attach: boom"
+    # A Session waits on the server, so the plain client attaches to it rather than making its own.
+    $T new-session -d
+    tmux9="case \"\$*\" in *-C*) exec $REAL \"\$@\";; *attach-session*) echo 'no attach: boom'; exit 1;; esac; exec"
+    tmux9="$tmux9 $REAL \"\$@\""
+    fake 9 tmux "$tmux9"
+    : >"$TMUX_TMPDIR/keys9"
+    hidden 9 NMUX_SELFTEST_SCREEN="$TMUX_TMPDIR/screen9" NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys9"
+    check "a client that fails within a second waits" within 10 waits9
+    check "with tmux's error on screen" within 3 grep -qsF "no attach: boom" "$TMUX_TMPDIR/screen9"
+    check "and no card" not grep -q "^selftest: card " "$LOG"
+    echo "0 0 61" >>"$TMUX_TMPDIR/keys9"
+    check "a key attaches again" within 3 logged "attached $(attached) again"
+    check "and its failure waits again" within 3 is 2 grep -c "^selftest: ended .* wait\$" "$LOG"
     kill "$PID"
     check "the app quits on SIGTERM" ended
 }

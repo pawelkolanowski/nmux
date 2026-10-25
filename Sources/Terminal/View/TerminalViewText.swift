@@ -44,7 +44,8 @@ extension TerminalView: @preconcurrency NSTextInputClient {
 
     public func unmarkText() { markedText = "" }
 
-    /// Marked text goes when the window loses key or the view its window; the text system forgets it too.
+    /// Marked text goes when the window loses key, the view its window, or its Session is hidden; the text system
+    /// forgets it too.
     func dropMarkedText() {
         guard !markedText.isEmpty else { return }
         inputContext?.discardMarkedText()

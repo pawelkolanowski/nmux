@@ -27,7 +27,8 @@
 #   - logs the bytes parsed each time output settles for 0.4 s; the first time, it probes the terminal.
 #   - asks every 0.1 s whether a hold still stands.
 #   - logs the named cells, the rows the last rebuild shaped and the cursor each time the frames settle for 0.4 s.
-#   - reads one frame back the first time the first named cell holds a glyph, and again after each commit.
+#   - reads one frame back the first time the first named cell holds a glyph, again after each commit, and after each
+#     switch of Session. It watches every Session's view and acts on the shown one.
 #   - logs `selection <x0>,<y0>-<x1>,<y1>` or `selection none` for each settled frame whose selection differs from the
 #     last logged one, and reads a frame back again.
 #   - logs `key <keycode> <mods> -> <hex>` for each key the view sends, `none` when the encoder made no bytes.
@@ -68,6 +69,8 @@
 #                       and lets go there.
 #   pasteboard          logs `pasteboard <hex>` or `pasteboard none`.
 #   pasteboard <hex>    writes that string to the pasteboard.
+#   create [<name>]     creates a Session through `create`.
+#   goto <shortcut>     performs that Session shortcut through `perform`.
 
 APP=${APP:-build/selftest/nmux.app}
 BIN=$APP/Contents/MacOS/nmux
@@ -125,7 +128,9 @@ isAttached() { [ -n "$(attached)" ]; }
 # holds: reads `W H C R w h s` and passes when content W x H points is C x R cells of w x h pixels at scale s,
 # within the half point it is rounded up to.
 holds() { awk '{ exit !(($3 * $5 / $7 - $1) ^ 2 <= 0.25 && ($4 * $6 / $7 - $2) ^ 2 <= 0.25) }'; }
-# plains <format>: the plain clients.
-plains() { $T list-clients -F "$1" 2>/dev/null; }
+# plains <format>: the plain clients, without nmux's control client.
+plains() { $T list-clients -f "#{==:#{client_control_mode},0}" -F "$1" 2>/dev/null; }
 clients() { plains "#{session_id} #{client_control_mode}"; }
+controls() { $T list-clients -f "#{client_control_mode}" -F "#{client_name}" 2>/dev/null; }
+oneControl() { [ "$(controls | wc -l)" -eq 1 ]; }
 noClients() { [ -z "$($T list-clients)" ]; }

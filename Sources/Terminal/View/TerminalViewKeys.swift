@@ -18,6 +18,10 @@ extension TerminalView {
             taken.insert(event.keyCode)
             return
         }
+        if onKeyDown() {
+            taken.insert(event.keyCode)
+            return
+        }
         if let bytes = editKey(event.keyCode, event.modifierFlags) {
             taken.insert(event.keyCode)
             return send(event, bytes)

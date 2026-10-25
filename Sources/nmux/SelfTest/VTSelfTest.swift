@@ -3,11 +3,13 @@ import AppKit
 import Terminal
 
 /// The self-test's script interpreter and its view of the VT host and the drawing: it reads the lines
-/// NMUX_SELFTEST_KEYS gains, watches the terminal's view as its observer, and logs what it sees. Tests/seam/lib.sh
-/// describes every command and every line it logs.
+/// NMUX_SELFTEST_KEYS gains, watches every Session's view as its observer and acts on the shown one, and logs what it
+/// sees. Tests/seam/lib.sh describes every command and every line it logs.
 final class VTSelfTest: TerminalViewObserver {
-    private let view: TerminalView
-    /// Hands the terminal the font of that backing scale, as a move to another screen does.
+    private var view: TerminalView
+    private let create: (String) -> Void
+    private let perform: (AppAction) -> Void
+    /// Hands every terminal the font of that backing scale, as a move to another screen does.
     private let rescale: (Double) -> Void
     /// Resolves the theme for that appearance, nil for the window's own, and applies it, as a switch of the system's
     /// does.
@@ -23,11 +25,13 @@ final class VTSelfTest: TerminalViewObserver {
     private var loggedSelection = "none"
     /// What the text system does with the next key, `mark` or `insert` and its hex, empty for nothing.
     private var textCall: [String] = []
-    /// The self-test's own, never the author's.
+    /// Every Session's, as the general pasteboard is shared.
     private let pasteboard = NSPasteboard.withUniqueName()
 
-    init(_ view: TerminalView, rescale: @escaping (Double) -> Void, appearance: @escaping (Bool?) -> Void) {
-        (self.view, self.rescale, self.appearance) = (view, rescale, appearance)
+    init(_ view: TerminalView, create: @escaping (String) -> Void, perform: @escaping (AppAction) -> Void,
+         rescale: @escaping (Double) -> Void, appearance: @escaping (Bool?) -> Void) {
+        (self.view, self.create, self.perform, self.rescale) = (view, create, perform, rescale)
+        self.appearance = appearance
         named = (SelfTest.cells ?? "").split(separator: " ").compactMap { pair in
             let xy = pair.split(separator: ",").compactMap { Int($0) }
             return xy.count == 2 ? (xy[0], xy[1]) : nil
@@ -42,8 +46,14 @@ final class VTSelfTest: TerminalViewObserver {
         if let path = SelfTest.keys { pollKeys(path) }
     }
 
-    /// Watches the view, before it gets its first drawable.
-    private func add(_ view: TerminalView) {
+    /// The shown Session's view; its first settled frame is read back.
+    func follow(_ view: TerminalView) {
+        self.view = view
+        readBack = false
+    }
+
+    /// Watches a new Session's view, before it gets its first drawable.
+    func add(_ view: TerminalView) {
         view.observer = self
         view.keepFramesReadable()
         view.stepWhileHidden()
@@ -53,7 +63,10 @@ final class VTSelfTest: TerminalViewObserver {
         view.use(pasteboard)
     }
 
-    func resized(_ view: TerminalView, grid: Grid) { selfTestLog("resize \(grid.cols)x\(grid.rows)") }
+    /// Every Session takes each resize; only the shown one logs it.
+    func resized(_ view: TerminalView, grid: Grid) {
+        if view === self.view { selfTestLog("resize \(grid.cols)x\(grid.rows)") }
+    }
 
     func scaled(_ scale: Double, cell: Cell) {
         selfTestLog("scale \(logNumber(scale)) cell \(cell.width)x\(cell.height)")
@@ -111,6 +124,10 @@ final class VTSelfTest: TerminalViewObserver {
         var table: [String: ([String]) -> Void] = [
             "pasteboard": { self.pasteboardLine($0.first) },
             "rect": { if $0.isEmpty { self.rect() } },
+            "create": { self.create($0.joined(separator: " ")) },
+            "goto": { args in
+                if let action = shortcuts.map(\.action).first(where: { $0.name == args.first }) { self.perform(action) }
+            },
         ]
         for verb in ["mark", "insert"] {
             table[verb] = { args in if args.count == 1 { _ = self.client(verb, args[0]) } }

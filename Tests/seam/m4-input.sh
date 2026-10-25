@@ -30,6 +30,9 @@ run19() {
     check "with option-as-alt left, the left Option and b log ESC b" sent 11 1b62
     press 123 b00008 ef9c82
     check "Cmd+Left logs Ctrl+A" sent 123 01
+    press 18 100008 31
+    check "Cmd+1 logs the session-1 shortcut" logged "shortcut session-1"
+    check "and sends nothing to the PTY" not grep -q "^selftest: key 18 " "$LOG"
     press 24 100008 3d
     check "Cmd+= reaches the encoder, which makes no bytes of it as Ghostty does" sent 24 none
     $T respawn-pane -k -t keys "/usr/bin/seq 1 500; /bin/stty raw -echo; exec /bin/cat -v"
@@ -301,7 +304,7 @@ bracketed26() { within 3 logged "paste 610a62 bracketed=yes" && [ "$(cards paste
 # Run 26: paste. The pane's `tee` keeps the bytes it gets. Cmd+V pastes the self-test's pasteboard through
 # libghostty-vt: a plain line goes straight in; two lines without bracketed paste show the paste card first, where
 # Escape sends nothing and Return sends both; once the pane turns bracketed paste on, the same two lines go in wrapped,
-# with no card.
+# with no card, and go there even when Cmd+2 shows another Session before tmux says the pane is bracketed.
 run26() {
     $T new-session -d -s paste "/bin/stty raw -echo; exec /usr/bin/tee $TMUX_TMPDIR/pasted" \; set -t paste status off
     : >"$TMUX_TMPDIR/keys"
@@ -328,6 +331,13 @@ run26() {
     act26 "9 100008 76"
     check "after the pane turns bracketed paste on, the two lines paste with no card" bracketed26
     check "wrapped in ESC [200~ and ESC [201~" within 3 is 1b5b3230307e610a621b5b3230317e bytes bracketed
+    $T new-session -d -s other "/bin/stty raw -echo; exec /usr/bin/tee $TMUX_TMPDIR/other" \; set -t other status off
+    within 5 logged 'sessions $0:paste $1:other'
+    act26 "9 100008 76" "goto session-2"
+    check "a switch of Session before tmux answers leaves the paste in the Session of Cmd+V" \
+        within 3 is 1b5b3230307e610a621b5b3230317e1b5b3230307e610a621b5b3230317e bytes bracketed
+    check "and nothing in the Session shown" not test -s "$TMUX_TMPDIR/other"
+    $T kill-session -t other
     $T kill-session -t paste
     check "killing the Session ends the app" ended
 }

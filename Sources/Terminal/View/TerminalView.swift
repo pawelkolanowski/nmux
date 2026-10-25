@@ -21,6 +21,11 @@ public final class TerminalView: NSView {
     public var shortcut: (NSEvent) -> Bool = { _ in false }
     /// On the main thread once the client exited: its wait status and its last 4 KB of output.
     public var onExit: (Int32, String) -> Void = { _, _ in }
+    /// Each BEL the client wrote, on the main thread.
+    public var onBell: () -> Void = {}
+    /// Each key pressed that no shortcut took, before it is encoded; true takes the key, as a Session whose client
+    /// ended retries on it.
+    public var onKeyDown: () -> Bool = { false }
     let keys = KeyEncoder()
     let mouse = MouseEncoder()
     var wheel = WheelScroll()
@@ -93,7 +98,8 @@ public final class TerminalView: NSView {
             // Output resumes the paused frames; on the reader thread, so the hop to the main queue is coalesced.
             output: { n in
                 waker.wake(n) { bytes in
-                    relay.view?.resume()
+                    // A hidden view draws once it is shown, so its output leaves the frames paused.
+                    if relay.view?.isHidden == false { relay.view?.resume() }
 #if NMUX_SELFTEST
                     relay.view?.observer?.output(bytes)
 #endif
@@ -103,7 +109,8 @@ public final class TerminalView: NSView {
             // OSC 52 arrives on the reader thread, with the terminal locked; the pasteboard and the card wait for the
             // main one.
             clipboardWrite: { text in onMain { relay.view?.clipboardWritten(text) } },
-            clipboardRead: { onMain { relay.view?.clipboardAsked() } })
+            clipboardRead: { onMain { relay.view?.clipboardAsked() } },
+            bell: { onMain { relay.view?.onBell() } })
 #if NMUX_SELFTEST
         handlers.hold = { held in
             if held { onMain { relay.view?.observer?.holdStarted() } }
@@ -127,7 +134,7 @@ public final class TerminalView: NSView {
     required init?(coder: NSCoder) { fatalError("TerminalView is never decoded") }
 
     /// The theme's colours: the terminal's defaults and palette under the host's lock, and the selection's; every row
-    /// draws again.
+    /// draws again, a hidden Session once it is shown.
     public func setColors(_ colors: TerminalColors) {
         host.setColors(colors)
         func rgba(_ c: RGB?) -> SIMD4<UInt8>? { c.map { [$0.r, $0.g, $0.b, 255] } }
@@ -187,8 +194,8 @@ public final class TerminalView: NSView {
     private func sized() {
         renderer.layer.drawableSize = CGSize(width: bounds.width * font.scale, height: bounds.height * font.scale)
         redraw = true
-        // Out of a window the view has no size of its own yet.
-        guard window != nil else { return }
+        // Out of a window the view has no size of its own yet. A hidden view takes its grid once, as the resize ends.
+        guard window != nil, !(inLiveResize && isHidden) else { return }
         if inLiveResize {
             fitHost()
             step()
@@ -230,8 +237,9 @@ public final class TerminalView: NSView {
         super.viewDidEndLiveResize()
         renderer.layer.presentsWithTransaction = false
         sized()
-        // AppKit may still report the live resize here, so the last size is snapped by hand.
-        _ = snapLater()
+        // AppKit may still report the live resize here, so the last size is snapped by hand, and a hidden view, which
+        // skipped every step of the resize, fits its pty.
+        if !snapLater() { fitHost() }
     }
 
     /// Also called for a change of colour space alone, which keeps the scale.
@@ -274,9 +282,34 @@ public final class TerminalView: NSView {
     private func keyChanged(_ focused: Bool) {
         if !focused { dropMarkedText() }
         setFocused(focused)
+        if !isHidden { reportFocus(focused) }
+    }
+
+    private func reportFocus(_ focused: Bool) {
         guard focused != reportedFocus else { return }
         reportedFocus = focused
         host.reportFocus(focused)
+    }
+
+    /// A hidden Session draws nothing, hears focus out and drops its marked text.
+    public override func viewDidHide() {
+        super.viewDidHide()
+        dropMarkedText()
+        reportFocus(false)
+        syncBlink()
+    }
+
+    /// The Session shown hears focus in, and presents its frame with the window's transaction, so the switch never
+    /// shows an empty or stale frame.
+    public override func viewDidUnhide() {
+        super.viewDidUnhide()
+        // A view hidden through a live resize may have missed its end.
+        fitHost()
+        reportFocus(window?.isKeyWindow ?? false)
+        renderer.layer.presentsWithTransaction = true
+        redraw = true
+        step()
+        renderer.layer.presentsWithTransaction = inLiveResize
     }
 
     func resume() { link?.isPaused = false }
@@ -285,6 +318,10 @@ public final class TerminalView: NSView {
     /// drawn and pauses too: output wakes the frames, and so does one timer past the hold's 1 s, by which time
     /// `holding` has ended it, so the end is drawn even when output stops.
     @objc func step() {
+        guard !isHidden else {
+            link?.isPaused = true
+            return
+        }
         syncPointerShape()
         if host.holding() {
             link?.isPaused = true
@@ -313,7 +350,7 @@ public final class TerminalView: NSView {
     /// Starts or stops the blink as the terminal and the focus ask; each toggle draws one frame. An unfocused window
     /// draws the hollow block, which Ghostty never blinks, so its blink would draw frames that change nothing.
     private func syncBlink() {
-        let wanted = cells.cursorBlinking && cells.focused
+        let wanted = cells.cursorBlinking && cells.focused && !isHidden
         if wanted, blink == nil {
             let timer = Timer(timeInterval: 0.6, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
