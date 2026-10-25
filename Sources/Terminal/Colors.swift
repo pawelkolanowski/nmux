@@ -1,4 +1,5 @@
-// The fallback's colours, Terminal.app's Basic profile and xterm's colours 16 to 255.
+// The fallback's colours, Terminal.app's Basic profile and xterm's colours 16 to 255, and the colours a terminal takes
+// from the theme.
 
 public struct RGB: Equatable, Sendable {
     public let r, g, b: UInt8
@@ -12,7 +13,7 @@ public struct RGB: Equatable, Sendable {
     public var hex: UInt32 { UInt32(r) << 16 | UInt32(g) << 8 | UInt32(b) }
 }
 
-/// Black on white in light mode, white on black in dark mode.
+/// Black on white in light mode, white on black in dark mode; the cursor takes the foreground.
 public func fallbackDefaults(dark: Bool) -> (foreground: RGB, background: RGB) {
     dark ? (RGB(0xffffff), RGB(0x000000)) : (RGB(0x000000), RGB(0xffffff))
 }
@@ -26,3 +27,16 @@ public let fallbackPalette: [RGB] = {
     let greys = (0..<24).map { i in UInt32(8 + 10 * i) * 0x010101 }
     return (basic + cube + greys).map(RGB.init)
 }()
+
+/// What a terminal draws in: its defaults, its 256 colours, and the appearance they were resolved for, which the colour
+/// scheme report gives.
+public struct TerminalColors: Equatable, Sendable {
+    public var foreground, background, cursor: RGB
+    public var palette: [RGB]
+    public var dark: Bool
+
+    public init(foreground: RGB, background: RGB, cursor: RGB, palette: [RGB], dark: Bool) {
+        (self.foreground, self.background, self.cursor, self.palette) = (foreground, background, cursor, palette)
+        self.dark = dark
+    }
+}

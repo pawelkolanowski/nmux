@@ -3,9 +3,15 @@
 ptyControls() {
     [ "$(ps -o tty= -p "$(plains "#{client_pid}")" | tr -d " ")" = "$(plains "#{client_tty}" | sed "s#^/dev/##")" ]
 }
+wholePixels() { echo "$cell" | grep -qE "^[0-9]+ [0-9]+ baseline [0-9]+ scale [0-9.]+$"; }
+contentHolds() { echo "$cell $grid" | awk '{ print $10, $11, $7, $8, $1, $2, $6 }' | holds; }
 topEdge() {
     echo "$(sed -n "s/^selftest: window //p" "$LOG") $(sed -n "s/^selftest: visible //p" "$LOG")" \
         | awk '{ exit !(($2 + $4 - $6 - $8) ^ 2 <= 1) }'
+}
+fallbackFace() {
+    f=$(sed -n "s/^selftest: face U+4E2D //p" "$LOG")
+    [ -n "$f" ] && [ "$f" != none ] && [ "${f#.}" != LastResort ] && ! logged "face U+0041 $f"
 }
 
 # Run 1: an empty server gets one Session and one plain client on it, at the window's grid. The server
@@ -23,8 +29,11 @@ run1() {
     check "an empty server gets one Session" is "$(attached)" $T list-sessions -F "#{session_id}"
     check "one plain client is attached to it" within 3 is "$(attached) 0" clients
     check "the pty is the client's controlling terminal" ptyControls
-    # `grid C R`, with the x as a space.
+    # `cell W H baseline B scale S` and `grid C R content W H`, with the x's as spaces.
+    cell=$(sed -n "s/^selftest: cell //p" "$LOG" | tr x ' ')
     grid=$(sed -n "s/^selftest: grid //p" "$LOG" | tr x ' ')
+    check "the cell is measured in whole pixels" wholePixels
+    check "the content holds the grid times the cell, within half a point" contentHolds
     # The seam cannot move the pointer, so it checks the screen under the pointer as it is now.
     check "the window's top edge is the visible frame's top" topEdge
     check "tmux sees the client at the logged grid" \
@@ -32,6 +41,9 @@ run1() {
     seen="client $(echo "$grid" | cut -d " " -f 1-2)"
     check "tmux sets the client to the logged grid on the attach" within 3 grep -qxF "$seen" "$TMUX_TMPDIR/sizes"
     check "and never to another size, nor resizes its window" not grep -vxF "$seen" "$TMUX_TMPDIR/sizes"
+    check "SF Mono draws a Latin letter" not logged "face U+0041 none"
+    check "a fallback face other than SF Mono draws 中" fallbackFace
+    check "LastResort never stands in for a glyph" logged "face U+10FFFD none"
     kill "$PID"
     check "the app quits on SIGTERM" ended
     check "and exits with 0" [ "$status" -eq 0 ]
@@ -153,12 +165,16 @@ run10() {
     check "brew ends with it" within 3 not running "sleep 31"
 }
 
-# Run 40: launched as from the Dock, with no locale variable, the app's client is UTF-8.
+utf8Line40() { grep -qF "zażółć →" "$TMUX_TMPDIR/screen40"; }
+
+# Run 40: launched as from the Dock, with no locale variable, the app's client is UTF-8, and a pane's non-ASCII line
+# reaches the screen intact, never as `_`.
 run40() {
-    $T new-session -d
-    launch 40 -u LANG -u LC_ALL -u LC_CTYPE
+    $T new-session -d "/usr/bin/printf 'zażółć →\n'; exec /bin/cat"
+    launch 40 -u LANG -u LC_ALL -u LC_CTYPE NMUX_SELFTEST_SCREEN="$TMUX_TMPDIR/screen40"
     check "the app attaches" within 10 isAttached
     check "its client is UTF-8" within 3 is 1 plains "#{client_utf8}"
+    check "a pane's non-ASCII line reaches the screen intact" within 5 utf8Line40
     kill "$PID"
     check "the app quits on SIGTERM" ended
 }

@@ -4,13 +4,14 @@ import PackageDescription
 
 let package = Package(
     name: "nmux",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26)], // Metal 4, which nmux's renderer needs
     targets: [
         // The app runs on the main actor; what runs off it, its tmux and process readers and its pure logic, says
         // `nonisolated`.
         .executableTarget(name: "nmux", dependencies: ["Terminal"], swiftSettings: [.defaultIsolation(MainActor.self)]),
-        // The terminal: the pty its client runs on; it knows no menu, window or bundle.
-        .target(name: "Terminal", dependencies: ["GhosttyVt"]),
+        // The terminal: the pty, the VT host and the view that draws it; it knows no menu, window or bundle.
+        // `make` compiles the shaders.
+        .target(name: "Terminal", dependencies: ["GhosttyVt"], exclude: ["Render/Shaders.metal"]),
         .binaryTarget(name: "GhosttyVt", path: "vendor/ghostty-vt.xcframework.zip"),
         // The lock's rules, for the tests; `make` builds check-lock from the same file with swiftc, before SwiftPM
         // unpacks the zip.

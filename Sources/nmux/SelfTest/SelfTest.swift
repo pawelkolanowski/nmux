@@ -11,6 +11,9 @@ nonisolated enum SelfTest {
     static let press = variable("PRESS")
     /// Hides tmux's known paths, so the seam's login shell decides alone.
     static let noKnownPaths = variable("NO_KNOWN_PATHS") != nil
+    /// The cells logged on each settled frame, and where the screen's text goes.
+    static let cells = variable("CELLS")
+    static let screen = variable("SCREEN")
 
     private static func variable(_ name: String) -> String? {
         ProcessInfo.processInfo.environment["NMUX_SELFTEST_\(name)"]
@@ -25,6 +28,12 @@ nonisolated func selfTestLog(_ event: @autoclosure () -> String) {
 #endif
 }
 
+/// A whole number without its fraction, any other with it.
+func logNumber(_ value: CGFloat) -> String { String(format: "%g", Double(value)) }
+
 func rectLog(_ r: NSRect) -> String {
     [r.origin.x, r.origin.y, r.width, r.height].map { String(Int($0.rounded())) }.joined(separator: " ")
 }
+
+/// Bytes as two hex digits each.
+func hex(_ bytes: some Sequence<UInt8>) -> String { bytes.map { String(format: "%02x", $0) }.joined() }

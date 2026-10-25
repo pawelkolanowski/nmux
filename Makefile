@@ -53,6 +53,9 @@ build/selftest/nmux: $(SOURCES) Package.swift $(VT)/libghostty-vt.a
 $(SELFTEST): $(APP) build/selftest/nmux
 	rm -rf $@ && cp -R $(APP) $@ && cp build/selftest/nmux $@/Contents/MacOS/nmux
 
+build/nmux.metallib: Sources/Terminal/Render/Shaders.metal
+	mkdir -p build && xcrun metal -Wall -o $@ $<
+
 # iconutil takes every size at 1x and 2x.
 build/logo.icns: assets/logo.svg
 	rm -rf build/logo.iconset && mkdir -p build/logo.iconset
@@ -63,12 +66,12 @@ build/logo.icns: assets/logo.svg
 	done
 	iconutil -c icns -o $@ build/logo.iconset
 
-$(APP): build/nmux build/logo.icns Resources/Info.plist LICENSE NOTICE vendor/LICENSE-ghostty
+$(APP): build/nmux build/nmux.metallib build/logo.icns Resources/Info.plist LICENSE NOTICE vendor/LICENSE-ghostty
 	rm -rf $@
 	mkdir -p $@/Contents/MacOS $@/Contents/Resources/Licenses
 	cp build/nmux $@/Contents/MacOS/
 	cp Resources/Info.plist $@/Contents/
-	cp build/logo.icns $@/Contents/Resources/
+	cp build/logo.icns build/nmux.metallib $@/Contents/Resources/
 	cp LICENSE $@/Contents/Resources/Licenses/nmux-LICENSE
 	cp NOTICE $@/Contents/Resources/Licenses/NOTICE
 	cp vendor/LICENSE-ghostty $@/Contents/Resources/Licenses/ghostty-LICENSE
