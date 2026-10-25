@@ -23,6 +23,9 @@ func sfMono(_ size: CGFloat) -> CTFont {
     return CTFontCreateWithFontDescriptor((file as! [CTFontDescriptor])[0], size, nil)
 }
 
+// The flags an arrow key carries.
+let arrows: NSEvent.ModifierFlags = [.function, .numericPad]
+
 // A cell of 17 × 33 pixels with the font's decorations, as the constraint and sprite tests draw in.
 let decorated = Cell(width: 17, height: 33, baseline: 6, underlinePosition: 29, underlineThickness: 2,
                      strikethroughPosition: 20, strikethroughThickness: 2, cursorThickness: 1, faceWidth: 17,

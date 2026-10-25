@@ -9,7 +9,8 @@ let package = Package(
         // The app runs on the main actor; what runs off it, its tmux and process readers and its pure logic, says
         // `nonisolated`.
         .executableTarget(name: "nmux", dependencies: ["Terminal"], swiftSettings: [.defaultIsolation(MainActor.self)]),
-        // The terminal: the pty, the VT host and the view that draws it; it knows no menu, window or bundle.
+        // The terminal: the pty, the VT host, input, the clipboard and the view that draws it; it knows no menu, window
+        // or bundle.
         // `make` compiles the shaders.
         .target(name: "Terminal", dependencies: ["GhosttyVt"], exclude: ["Render/Shaders.metal"]),
         .binaryTarget(name: "GhosttyVt", path: "vendor/ghostty-vt.xcframework.zip"),

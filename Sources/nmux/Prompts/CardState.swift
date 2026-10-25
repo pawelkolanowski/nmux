@@ -2,12 +2,13 @@ import Foundation
 
 /// A button on a card. The self-test presses one by this name.
 nonisolated enum CardAction: String, Sendable {
-    case quit, restart, install
+    case quit, restart, install, cancel, paste, deny, allow
 }
 
-/// Which card it is: a failed attach's or brew's install.
+/// Which card it is: a failed attach's, brew's install or a clipboard ask.
 nonisolated enum CardKind: Equatable, Sendable {
     case missing(brew: Bool), tooOld(brew: Bool), server, client, installing, installFailed
+    case paste, read, write
 
     /// The name the self-test logs it by.
     var name: String {
@@ -18,24 +19,30 @@ nonisolated enum CardKind: Equatable, Sendable {
         case .client: "client"
         case .installing: "installing"
         case .installFailed: "install-failed"
+        case .paste: "paste"
+        case .read: "read"
+        case .write: "write"
         }
     }
 }
 
-/// What a card shows: a pure value the card view draws and the self-test logs by its kind's name. The default action,
-/// which Return presses, is the last one.
+/// What a card shows: a pure value the card view draws and the self-test logs by its kind's name. The excerpt is text a
+/// program handles, drawn in the terminal's face. The default action, which Return presses, is `preferred`, else the
+/// last one.
 nonisolated struct CardState: Equatable, Sendable {
     let kind: CardKind
     let title: String
     var detail: String? = nil
+    var excerpt: String? = nil
     var commands: [String] = []
     var spinner = false
     let actions: [CardAction]
+    var preferred: CardAction? = nil
 
     var name: String { kind.name }
-    var defaultAction: CardAction? { actions.last }
-    /// What Escape presses.
-    var escape: CardAction? { actions.first { $0 == .quit } }
+    var defaultAction: CardAction? { preferred ?? actions.last }
+    /// What Escape presses; a click outside the panel presses it too, unless it quits.
+    var escape: CardAction? { actions.first { [.cancel, .deny, .quit].contains($0) } }
 
     /// What a button reads.
     func label(_ action: CardAction) -> String { action.rawValue.capitalized }

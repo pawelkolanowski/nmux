@@ -8,7 +8,7 @@ private let missingBrew = cardState(.missing, brew: true), missingNoBrew = cardS
 
 struct CardStateTests {
     @Test("a card's kind gives the name the self-test logs", arguments: [
-        (installingCard(""), "installing"), (installFailedCard("x"), "install-failed"),
+        (readCard, "read"), (pasteCard("x"), "paste"),
     ])
     func aCardsKindGivesTheNameTheSelfTestLogs(card: CardState, name: String) {
         #expect(card.name == name)

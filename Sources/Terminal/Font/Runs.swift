@@ -38,10 +38,10 @@ struct Cluster: RandomAccessCollection, Hashable, ExpressibleByArrayLiteral {
 }
 
 /// Ghostty's `RunIterator.next` over a whole row, each run as the cells it covers. A run breaks where the style or the
-/// face changes, between `f` and `l` or `i`, between `s` and `t`, and on both sides of the cursor's cell unless that
-/// cell is a grapheme. Invisible cells at a run's start are skipped, spacers ride along with the run, and trailing
-/// empty cells are trimmed.
-func runs(_ cells: [RunCell], cursor: Int?) -> [Range<Int>] {
+/// face changes, between `f` and `l` or `i`, between `s` and `t`, on both sides of the cursor's cell unless that
+/// cell is a grapheme, and before the selection's first cell and after its last. Invisible cells at a run's start are
+/// skipped, spacers ride along with the run, and trailing empty cells are trimmed.
+func runs(_ cells: [RunCell], cursor: Int?, selection: ClosedRange<Int>? = nil) -> [Range<Int>] {
     let end = (cells.lastIndex { !$0.empty } ?? -1) + 1
     var out: [Range<Int>] = []
     var i = 0
@@ -51,6 +51,8 @@ func runs(_ cells: [RunCell], cursor: Int?) -> [Range<Int>] {
         var j = i, face: Int?
         while j < end {
             let cell = cells[j]
+            // Before the spacer check, as Ghostty's: a selection edge on a spacer breaks there too.
+            if let selection, j > i, j == selection.lowerBound || j == selection.upperBound + 1 { break }
             if cell.spacer { j += 1; continue }
             if j > i {
                 let prev = cells[j - 1]

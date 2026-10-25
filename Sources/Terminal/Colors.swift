@@ -28,16 +28,19 @@ public let fallbackPalette: [RGB] = {
     return (basic + cube + greys).map(RGB.init)
 }()
 
-/// What a terminal draws in: its defaults, its 256 colours, the text under a block cursor, nil where the text takes the
-/// background in force, and the appearance they were resolved for, which the colour scheme report gives.
+/// What a terminal draws in: its defaults, its 256 colours, the text under a block cursor and its selection's colours,
+/// nil where the text takes the background in force or a selected cell inverts, and the appearance they were resolved
+/// for, which the colour scheme report gives.
 public struct TerminalColors: Equatable, Sendable {
     public var foreground, background, cursor: RGB
     public var palette: [RGB]
-    public var cursorText: RGB?
+    public var cursorText, selectionBackground, selectionForeground: RGB?
     public var dark: Bool
 
-    public init(foreground: RGB, background: RGB, cursor: RGB, palette: [RGB], cursorText: RGB? = nil, dark: Bool) {
+    public init(foreground: RGB, background: RGB, cursor: RGB, palette: [RGB], cursorText: RGB? = nil,
+                selectionBackground: RGB?, selectionForeground: RGB?, dark: Bool) {
         (self.foreground, self.background, self.cursor, self.palette) = (foreground, background, cursor, palette)
-        (self.cursorText, self.dark) = (cursorText, dark)
+        (self.cursorText, self.selectionBackground) = (cursorText, selectionBackground)
+        (self.selectionForeground, self.dark) = (selectionForeground, dark)
     }
 }

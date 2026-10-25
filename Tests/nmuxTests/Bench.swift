@@ -16,7 +16,8 @@ struct BenchTests {
         try text.write(toFile: screen, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(atPath: screen) }
         let parsed = Atomic<Int>(0)
-        let handlers = VTHost.Handlers(output: { parsed.add($0, ordering: .relaxed) }, exit: { _, _ in })
+        let handlers = VTHost.Handlers(output: { parsed.add($0, ordering: .relaxed) }, exit: { _, _ in },
+                                       clipboardWrite: { _ in }, clipboardRead: {})
         let host = try VTHost(argv: ["/bin/cat", screen], grid: grid, cell: font.cell, handlers: handlers)
         host.start()
         let size = text.utf8.count

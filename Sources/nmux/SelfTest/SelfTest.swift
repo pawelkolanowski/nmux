@@ -13,9 +13,19 @@ nonisolated enum SelfTest {
     static let font = variable("FONT")
     /// Hides tmux's known paths, so the seam's login shell decides alone.
     static let noKnownPaths = variable("NO_KNOWN_PATHS") != nil
-    /// The cells logged on each settled frame, and where the screen's text goes.
+    /// The script of keys and commands, the cells logged on each settled frame, and where the screen's text goes.
+    static let keys = variable("KEYS")
     static let cells = variable("CELLS")
     static let screen = variable("SCREEN")
+    /// The input settings and the selection's colours, `<background> <foreground>` in hex; unset keeps the view's.
+    static let optionAsAlt = variable("OPTION_AS_ALT").flatMap(OptionAsAlt.init)
+    static let copyOnSelect = variable("COPY_ON_SELECT") == "true"
+    static let clipboardWrite = variable("CLIPBOARD_WRITE").flatMap(ClipboardAccess.init)
+    static let clipboardRead = variable("CLIPBOARD_READ").flatMap(ClipboardAccess.init)
+    static let selectionColors: (RGB, RGB)? = {
+        let hex = (variable("SELECTION_COLORS") ?? "").split(separator: " ").compactMap { UInt32($0, radix: 16) }
+        return hex.count == 2 ? (RGB(hex[0]), RGB(hex[1])) : nil
+    }()
 
     private static func variable(_ name: String) -> String? {
         ProcessInfo.processInfo.environment["NMUX_SELFTEST_\(name)"]

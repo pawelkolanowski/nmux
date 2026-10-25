@@ -2,7 +2,7 @@
 import Foundation
 import GhosttyVt
 
-/// The self-test's view of the VT host: the screen's text and the default background.
+/// The self-test's view of the VT host: the screen's text, the default background, and the names of a mouse report.
 extension VTHost {
     /// The active screen as plain text, its trailing blanks trimmed.
     public func screenText() -> String { locked(plainText) }
@@ -43,4 +43,23 @@ private func plainText(_ terminal: GhosttyTerminal) -> String {
     return String(decoding: UnsafeBufferPointer(start: out, count: len), as: UTF8.self)
 }
 
+/// A mouse report's action and button as the self-test logs them.
+func mouseActionName(_ a: GhosttyMouseAction) -> String {
+    switch a {
+    case GHOSTTY_MOUSE_ACTION_PRESS: "press"
+    case GHOSTTY_MOUSE_ACTION_RELEASE: "release"
+    default: "motion"
+    }
+}
+
+func mouseButtonName(_ b: GhosttyMouseButton) -> String {
+    switch b {
+    case GHOSTTY_MOUSE_BUTTON_LEFT: "left"
+    case GHOSTTY_MOUSE_BUTTON_RIGHT: "right"
+    case GHOSTTY_MOUSE_BUTTON_MIDDLE: "middle"
+    case GHOSTTY_MOUSE_BUTTON_FOUR: "four"
+    case GHOSTTY_MOUSE_BUTTON_FIVE: "five"
+    default: "\(b.rawValue)"
+    }
+}
 #endif

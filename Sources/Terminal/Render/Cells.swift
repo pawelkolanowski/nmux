@@ -6,7 +6,8 @@ import GhosttyVt
 // background, the glyphs its row's runs shaped onto it, its decorations, and the cursor. Adapted from Ghostty's
 // `src/renderer/generic.zig` (`rebuildRow`, `addGlyph`, `addUnderline`, `addOverline`, `addStrikethrough`,
 // `addCursor`), `src/renderer/cursor.zig` (`style`), `src/renderer/cell.zig` (`isCovering`), `src/font/SharedGrid.zig`
-// (`GlyphKey`) and `src/font/shaper/coretext.zig` (`shape`) at commit 22f100c6; the glyph's raster is `rasterise`'s.
+// (`GlyphKey`), `src/font/shaper/coretext.zig` (`shape`) and the preedit of `generic.zig` (`rebuildCells`,
+// `addPreeditCell`) at commit 22f100c6; the glyph's raster is `rasterise`'s.
 // Ghostty: MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors; see vendor/LICENSE-ghostty.
 
 /// Ghostty's `CellText`, 32 bytes, laid out as `CellText` in Shaders.metal.
@@ -70,10 +71,27 @@ final class Cells {
     var focused = true { didSet { if focused != oldValue { cursorChanged = true } } }
     var blinkVisible = true { didSet { if blinkVisible != oldValue { cursorChanged = true } } }
     private var cursorChanged = false
+    /// The text input client's marked text, each codepoint with a width, set by the view; drawn from the cursor's cell
+    /// on in place of the pane's cells there, which come back once it is gone.
+    var preedit: [UInt32] = [] { didSet { if preedit != oldValue { preeditChanged = true } } }
+    /// The cells of the link under the pointer while Cmd is held, underlined as Ghostty's hovered links are.
+    var hoveredLink: LinkCells? {
+        didSet { if hoveredLink != oldValue { linkRows += [oldValue?.row, hoveredLink?.row].compactMap { $0 } } }
+    }
+    private var linkRows: [Int] = []
+    /// The theme's selection colours, set by the view; where one is missing a selected cell takes the default
+    /// foreground as its background and the default background as its text, Ghostty's.
+    var selectionBackground: SIMD4<UInt8>? { didSet { if selectionBackground != oldValue { restyled = true } } }
+    var selectionForeground: SIMD4<UInt8>? { didSet { if selectionForeground != oldValue { restyled = true } } }
     /// The theme's text under a block cursor, set by the view; nil takes the background in force.
     var cursorText: SIMD4<UInt8>?
-    /// The theme changed, and every row draws again.
+    /// The selection's colours or the theme changed, and every row draws again.
     var restyled = false
+    /// Each row's selected columns as last built, nil where the row has none.
+    private(set) var selection: [ClosedRange<Int>?] = []
+    private var preeditChanged = false
+    /// The row the marked text was last drawn on.
+    private var preeditRow: Int?
     /// libghostty-vt marks nothing dirty when only the cursor's shape, blink or visibility changes, so the cursor
     /// as last built is compared with the render state's.
     private var builtCursor: BuiltCursor?
@@ -240,15 +258,19 @@ final class Cells {
         let built = BuiltCursor(cell: cur.viewport_has_value ? SIMD2(Int(cur.viewport_x), Int(cur.viewport_y)) : nil,
                                 style: cur.visual_style, visible: cur.visible, blinking: cur.blinking,
                                 background: rgba(colors.background), foreground: rgba(colors.foreground))
-        guard dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE || cursorChanged || built != builtCursor || restyled
+        guard dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE || cursorChanged || preeditChanged || !linkRows.isEmpty
+                || built != builtCursor || restyled
         else { return false }
-        // The default colours reach every cell that has none of its own.
+        // The default colours reach every cell that has none of its own, and selected cells.
         var full = dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL || restyled
             || built.background != builtCursor?.background || built.foreground != builtCursor?.foreground
         restyled = false
         // Runs break around the cursor, so a cursor that moved reshapes the rows it left and entered.
         let moved = built.cell != builtCursor?.cell ? [builtCursor?.cell?.y, built.cell?.y].compactMap { $0 } : []
-        (cursorChanged, builtCursor) = (false, built)
+        // Marked text that changed redraws the row it left and the cursor's.
+        // So does a link that came, went or moved.
+        let marked = (preeditChanged ? [preeditRow, built.cell?.y].compactMap { $0 } : []) + linkRows
+        (cursorChanged, preeditChanged, linkRows, builtCursor) = (false, false, [], built)
         (background, foreground) = (built.background, built.foreground)
 
         var c: UInt16 = 0, r: UInt16 = 0
@@ -259,9 +281,10 @@ final class Cells {
             bg = [SIMD4<UInt8>](repeating: .zero, count: cols * rows)
             drawn = [Drawn](repeating: Drawn(), count: cols * rows)
             text = [[CellText]](repeating: [], count: rows)
+            selection = [ClosedRange<Int>?](repeating: nil, count: rows)
             full = true
         }
-        if full || dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE || !moved.isEmpty {
+        if full || dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE || !moved.isEmpty || !marked.isEmpty {
             ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator)
             var y = 0, rebuilt = 0, shapedNow = 0
             var seen = Set<RowID>()
@@ -273,8 +296,12 @@ final class Cells {
                 seen.insert(key)
                 var rowDirty = false
                 ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, &rowDirty)
-                guard full || rowDirty || moved.contains(y) else { continue }
+                guard full || rowDirty || moved.contains(y) || marked.contains(y) else { continue }
                 ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &rowCells)
+                var sel = GhosttyRenderStateRowSelection()
+                sel.size = MemoryLayout<GhosttyRenderStateRowSelection>.size
+                selection[y] = ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION, &sel)
+                    == GHOSTTY_SUCCESS ? Int(sel.start_x)...Int(sel.end_x) : nil
                 rebuilt += 1
                 if rebuildRow(y, key, cursor: built.cell?.y == y ? built.cell?.x : nil) { shapedNow += 1 }
             }
@@ -290,10 +317,12 @@ final class Cells {
     /// them. libghostty-vt leaves inverse, faint and the bold colour to the host: inverse swaps the foreground and the
     /// background, faint halves the foreground's alpha, Ghostty's `faint-opacity`, and bold keeps its colour, Ghostty's
     /// default `bold-color`. A full block covers its cell, so it takes the foreground as its background too, and under
-    /// inverse the two cancel out, Ghostty's `isCovering`. An invisible cell draws only its background, as xterm.
-    /// True when the row's runs had to be shaped again.
+    /// inverse the two cancel out, Ghostty's `isCovering`. A selected cell takes the selection's colours over all of
+    /// that, a wide cell's tail with its head. An invisible cell draws only its background, as xterm. True when the
+    /// row's runs had to be shaped again.
     private func rebuildRow(_ y: Int, _ key: RowID, cursor: Int?) -> Bool {
         text[y].removeAll(keepingCapacity: true)
+        if preeditRow == y { preeditRow = nil }
         runCells.removeAll(keepingCapacity: true)
         var styles: [StyleKey: Int] = [:]
         var x = 0
@@ -326,8 +355,10 @@ final class Cells {
                 }
             }
             let cluster = Cluster(graphemes[..<Int(len)])
-            let cellBg = style.inverse != isCovering(cluster.first) ? fg : ownBg
-            var ink = style.inverse ? ownBg ?? background : fg
+            let selected = selection[y]?.contains(wide == GHOSTTY_CELL_WIDE_SPACER_TAIL ? x - 1 : x) == true
+            let cellBg = selected ? selectionBackground ?? foreground
+                : style.inverse != isCovering(cluster.first) ? fg : ownBg
+            var ink = selected ? selectionForeground ?? background : style.inverse ? ownBg ?? background : fg
             if style.faint { ink.w = 128 }
             bg[y * cols + x] = cellBg ?? .zero
             // The style SGR asks for, until a face of another style draws the cell.
@@ -338,7 +369,13 @@ final class Cells {
                                spacer: wide == GHOSTTY_CELL_WIDE_SPACER_TAIL || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD,
                                invisible: style.invisible)
             styles[styleKey] = cell.style
-            if let underline = underlineDecoration(style.underline) {
+            // A link takes a single underline, a double one where the cell's own is single.
+            let single = Int32(GHOSTTY_SGR_UNDERLINE_SINGLE.rawValue)
+            var sgr = style.underline
+            if hoveredLink?.row == y, hoveredLink?.cols.contains(x) == true {
+                sgr = sgr == single ? Int32(GHOSTTY_SGR_UNDERLINE_DOUBLE.rawValue) : single
+            }
+            if let underline = underlineDecoration(sgr) {
                 var line = underlineColor(style.underline_color) ?? ink
                 line.w = ink.w
                 d.decorations.append((underline, line))
@@ -377,20 +414,64 @@ final class Cells {
             drawn[y * cols + rest] = Drawn(fg: foreground, bg: background)
         }
 
-        let (glyphs, reshaped) = shapedGlyphs(key, cursor: cursor)
+        let (glyphs, reshaped) = shapedGlyphs(key, cursor: cursor, selection: selection[y])
         drawRow(y, glyphs)
+        if let cursor, !preedit.isEmpty { addPreedit(y, cursor: cursor) }
         return reshaped
+    }
+
+    /// Ghostty's preedit: the pane's cells under the marked text draw nothing, and each codepoint draws in the regular
+    /// face as text, in the default foreground, with a single underline under each of its cells.
+    private func addPreedit(_ y: Int, cursor: Int) {
+        let widths = preedit.map(preeditWidth)
+        let (start, dropped) = preeditPlace(widths, cursor: cursor, cols: cols)
+        let end = min(start + widths[dropped...].reduce(0, +), cols)
+        text[y].removeAll { (start..<end).contains(Int($0.gridPos.x)) }
+        for x in start..<end {
+            bg[y * cols + x] = .zero
+            drawn[y * cols + x] = Drawn(fg: foreground, bg: background)
+        }
+        let underline = decorationGlyph(.underline, span: 1)
+        var x = start
+        for (cp, width) in zip(preedit, widths).dropFirst(dropped) where x < cols {
+            defer { x += width }
+            let at = SIMD2(UInt16(x), UInt16(y))
+            var d = Drawn(cluster: [cp], fg: foreground, bg: background, wide: width == 2,
+                          decorations: [(.underline, foreground)])
+#if NMUX_SELFTEST
+            d.span = width
+#endif
+            for u in x..<min(x + width, cols) where underline.width > 0 {
+                text[y].append(CellText(underline, at: SIMD2(UInt16(u), UInt16(y)), color: foreground))
+            }
+            if let face = font.face(for: cp, presentation: .text) {
+                let id = face.sprite ? cp : glyph(face.font, cp).map(UInt32.init) ?? 0
+                let g = face.sprite ? spriteGlyph(cp, span: width)
+                    : id == 0 ? Glyph() : atlasGlyph(face, CGGlyph(id), constraint: glyphConstraint(cp), width: width)
+                if g.width > 0 {
+                    text[y].append(CellText(g, at: at, color: foreground))
+                    (d.face, d.sprite) = (face.font, face.sprite)
+#if NMUX_SELFTEST
+                    (d.glyph, d.glyphCount, d.atlas) = (id, 1, g.atlas)
+#endif
+                }
+            }
+            drawn[y * cols + x] = d
+        }
+        preeditRow = y
     }
 
     /// The row's shaped glyphs, kept by the row's identity while its runs hash the same, as Ghostty keeps a run's
     /// shaping by its hash; true when they had to be shaped again.
-    private func shapedGlyphs(_ key: RowID, cursor: Int?) -> (glyphs: [Shaped], reshaped: Bool) {
+    private func shapedGlyphs(_ key: RowID, cursor: Int?,
+                              selection: ClosedRange<Int>?) -> (glyphs: [Shaped], reshaped: Bool) {
         var hasher = Hasher()
         hasher.combine(runCells)
         hasher.combine(cursor)
+        hasher.combine(selection)
         let hash = hasher.finalize()
         if let kept = shapedRows[key], kept.hash == hash { return (kept.glyphs, false) }
-        let glyphs = shapeRow(cursor: cursor)
+        let glyphs = shapeRow(cursor: cursor, selection: selection)
         shapedRows[key] = (hash, glyphs)
         return (glyphs, true)
     }
@@ -439,9 +520,9 @@ final class Cells {
     }
 
     /// Each run of the row laid out in its face, its glyphs mapped back to the row's cells, in the cells' order.
-    private func shapeRow(cursor: Int?) -> [Shaped] {
+    private func shapeRow(cursor: Int?, selection: ClosedRange<Int>?) -> [Shaped] {
         var out: [Shaped] = []
-        for run in runs(runCells, cursor: cursor) {
+        for run in runs(runCells, cursor: cursor, selection: selection) {
             let text = runText(runCells[run])
             guard !text.utf16.isEmpty, let face = runCells[run].first(where: { !$0.spacer })?.face else { continue }
             // The sprite face is not shaped: each codepoint is its own glyph on its cell.
@@ -495,13 +576,14 @@ final class Cells {
         }
     }
 
-    /// Ghostty's cursor style: none outside the viewport or while hidden, a hollow block while unfocused, none in a
-    /// blink's off phase, else the shape the terminal asks for, over both cells of a wide character.
+    /// Ghostty's cursor style: none outside the viewport, while hidden or under marked text, a hollow block while
+    /// unfocused, none in a blink's off phase, else the shape the terminal asks for, over both cells of a wide
+    /// character.
     private func buildCursor(_ cur: GhosttyRenderStateCursor) {
         (cursor, cursorShape, cursorCell, cursorWide) = (nil, nil, nil, false)
         // A hidden cursor never blinks: its blink would draw frames that show nothing.
-        cursorBlinking = cur.blinking && cur.visible && cur.viewport_has_value
-        guard cur.viewport_has_value, cur.visible else { return }
+        cursorBlinking = cur.blinking && cur.visible && cur.viewport_has_value && preedit.isEmpty
+        guard cur.viewport_has_value, cur.visible, preedit.isEmpty else { return }
         let shape: CursorShape
         if !focused { shape = .hollow }
         else if cur.blinking && !blinkVisible { return }
@@ -596,7 +678,16 @@ final class Cells {
     }
 }
 
+/// A marked codepoint's cells, Ghostty's preedit width: two for a wide one, else one.
+func preeditWidth(_ cp: UInt32) -> Int { ghostty_unicode_codepoint_width(cp) == 2 ? 2 : 1 }
+
 func rgba(_ c: GhosttyColorRgb) -> SIMD4<UInt8> { [c.r, c.g, c.b, 255] }
 
 /// Whether the codepoint's glyph covers its whole cell: only the full block, as in Ghostty.
 private func isCovering(_ codepoint: UInt32?) -> Bool { codepoint == 0x2588 }
+
+/// A link's cells: one row's run of columns.
+struct LinkCells: Equatable {
+    var row: Int
+    var cols: Range<Int>
+}

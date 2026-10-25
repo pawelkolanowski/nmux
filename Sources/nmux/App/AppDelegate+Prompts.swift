@@ -1,8 +1,8 @@
 import AppKit
 import Terminal
 
-/// The cards: a failed attach's and brew's install. One card shows at a time, over the window, and takes the keys
-/// while it shows.
+/// The cards: a failed attach's and brew's install, and the clipboard's asks. One card shows at a time, over the
+/// window, and takes the keys while it shows.
 extension AppDelegate {
     /// Every failure shows its card. The brew lookup may wait 2 s on the login shell, so it runs off the main thread,
     /// and only for a failure brew can fix.
@@ -51,7 +51,32 @@ extension AppDelegate {
         case .quit: quit()
         case .restart: restart()
         case .install: if let brew { install(brew) }
+        case .paste, .allow: answered(true)
+        case .cancel, .deny: answered(false)
         }
+    }
+
+    /// A clipboard card over the terminal. A card already showing refuses the ask.
+    func ask(_ ask: ClipboardAsk, _ answer: @escaping (Bool) -> Void) {
+        guard card == nil else { return answer(false) }
+        clipboardAnswer = answer
+        switch ask {
+        case .paste(let text): showCard(pasteCard(text))
+        case .read: showCard(readCard)
+        case .write(let text): showCard(writeCard(text))
+        }
+        if let font {
+            card?.excerptFont = CTFontCreateCopyWithAttributes(font.primary, font.points, nil, nil) as NSFont
+        }
+    }
+
+    func answered(_ yes: Bool) {
+        card?.removeFromSuperview()
+        card = nil
+        window?.makeFirstResponder(terminal)
+        let answer = clipboardAnswer
+        clipboardAnswer = nil
+        answer?(yes)
     }
 
     /// The lookup, the version check and the attach again, in place; a failure brings the card back.

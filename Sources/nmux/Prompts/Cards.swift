@@ -47,3 +47,37 @@ nonisolated func lastLines(_ output: String, _ count: Int) -> String {
         .filter { !$0.allSatisfy(\.isWhitespace) }
         .suffix(count).joined(separator: "\n")
 }
+
+/// The lines a card's excerpt keeps, and the characters it keeps of each.
+nonisolated let excerptLines = 5, excerptWidth = 120
+
+/// The card for an unsafe paste: its line count, a final line break not counting, and its first lines.
+nonisolated func pasteCard(_ text: String) -> CardState {
+    let lines = lines(text)
+    return CardState(kind: .paste, title: "Paste \(lines.count) line\(lines.count == 1 ? "" : "s")?",
+                     excerpt: excerpt(lines), actions: [.cancel, .paste])
+}
+
+/// OSC 52's cards: Deny comes first and is the default, so a stray Return refuses.
+nonisolated let readCard = CardState(kind: .read, title: "Allow reading the clipboard?",
+                         detail: "A program in this Session asks for the clipboard's text.",
+                         actions: [.deny, .allow], preferred: .deny)
+
+nonisolated func writeCard(_ text: String) -> CardState {
+    CardState(kind: .write, title: "Allow writing to the clipboard?",
+              detail: "A program in this Session asks to copy this text.",
+              excerpt: excerpt(lines(text)),
+              actions: [.deny, .allow], preferred: .deny)
+}
+
+/// The text's lines, a final line break not opening one more.
+nonisolated private func lines(_ text: String) -> [Substring] {
+    var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+    if lines.count > 1, lines.last?.isEmpty == true { lines.removeLast() }
+    return lines
+}
+
+nonisolated private func excerpt(_ lines: [Substring]) -> String {
+    let cut = lines.prefix(excerptLines).map { $0.count > excerptWidth ? $0.prefix(excerptWidth) + "…" : String($0) }
+    return (cut + (lines.count > excerptLines ? ["…"] : [])).joined(separator: "\n")
+}

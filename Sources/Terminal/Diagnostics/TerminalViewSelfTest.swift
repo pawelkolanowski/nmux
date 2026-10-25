@@ -29,6 +29,12 @@ extension TerminalView {
         }
     }
 
+    /// `<x0>,<y0>-<x1>,<y1>`, the terminal's selection's first and last cell in the viewport, or `none`.
+    public func describeSelection() -> String {
+        guard let (first, last) = selectionGesture.span(grid) else { return "none" }
+        return "\(first.x),\(first.y)-\(last.x),\(last.y)"
+    }
+
     /// The rows the last update that rebuilt any row had to shape.
     public var rowsShaped: Int { cells.shaped }
 
@@ -46,12 +52,16 @@ extension TerminalView {
         return "\(at.x),\(at.y) \(shape.rawValue) \(hex(cells.cursorColor))"
     }
 
+    /// Copy, Paste and OSC 52 on a pasteboard of the self-test's own, never the author's.
+    public func use(_ pasteboard: NSPasteboard) { self.pasteboard = pasteboard }
+
     /// Lets `readBack` read the frames; set before the view gets its first drawable.
     public func keepFramesReadable() { renderer.layer.framebufferOnly = false }
 
     /// Draws one frame, reads its pixels back and hands `done` the verdict `bg <ok|bad> ink <x>,<y> <ok|bad> cursor
-    /// <ok|bad>`, then ` color <ok|bad>` when the ink cell's glyph is a colour one, then ` underline <x>,<y> <ok|bad>
-    /// plain <x>,<y> <ok|bad>` when given an underlined and a plain cell.
+    /// <ok|bad>`, then ` color <ok|bad>` when the ink cell's glyph is a colour one, then ` selected <ok|bad>` when the
+    /// ink cell is selected, then ` underline <x>,<y> <ok|bad> plain <x>,<y> <ok|bad>` when given an underlined and a
+    /// plain cell.
     public func readBack(ink x: Int, _ y: Int,
                          underline: (underlined: (x: Int, y: Int), plain: (x: Int, y: Int))? = nil,
                          _ done: @escaping (String) -> Void) {
@@ -98,7 +108,8 @@ extension Cells {
 
     /// `bg` is a pixel outside every glyph, in the terminal's background; `ink` any pixel of the cell at x, y that
     /// differs from the cell's background; `cursor` the cursor cell's centre in the cursor's colour; `color`, for a
-    /// colour glyph, any pixel of its cells that no blend of the foreground and the background gives.
+    /// colour glyph, any pixel of its cells that no blend of the foreground and the background gives; `selected`, for a
+    /// selected cell, its top left pixel in the cell's background.
     func verdict(_ frame: Readback, ink x: Int, _ y: Int) -> String {
         let cell = font.cell
         func centre(_ cx: Int, _ cy: Int) -> SIMD4<UInt8>? {
@@ -122,6 +133,9 @@ extension Cells {
                 }
             }
             verdict += " color \(ok(colored))"
+        }
+        if selection[y]?.contains(x) == true, let d = drawn(x, y) {
+            verdict += " selected \(ok(frame.bgra(x * cell.width, y * cell.height) == d.bg))"
         }
         return verdict
     }

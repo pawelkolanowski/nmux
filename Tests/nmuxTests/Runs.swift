@@ -55,6 +55,14 @@ struct RunTests {
         #expect(runs(marked + row("c"), cursor: 1) == [0..<3])
     }
 
+    @Test("a run breaks at a selection's edges inside a row") func aRunBreaksAtASelectionsEdgesInside() {
+        #expect(runs(row("a->b"), cursor: nil, selection: 1...1) == [0..<1, 1..<2, 2..<4])
+    }
+
+    @Test("a selection from the row's start breaks only after its end") func aSelectionFromTheRowsStartBreaksOnly() {
+        #expect(runs(row("->"), cursor: nil, selection: 0...0) == [0..<1, 1..<2])
+    }
+
     @Test("a surrogate pair maps both its units to its cell, the second as codepoint 0")
     func aSurrogatePairMapsBothItsUnitsTo() {
         #expect(pair.utf16.count == 3)

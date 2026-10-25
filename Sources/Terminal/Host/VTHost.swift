@@ -6,8 +6,8 @@ import QuartzCore
 
 /// The pty that runs tmux's client, the reader thread that parses its output, and one libghostty-vt terminal behind one
 /// lock, since libghostty-vt is not thread-safe. The callbacks follow Ghostty's `terminal.h`, and the device attributes
-/// its `src/terminal/device_attributes.zig` and the grapheme cluster mode its `src/termio/Termio.zig`, at commit
-/// 22f100c6.
+/// its `src/terminal/device_attributes.zig`, the grapheme cluster mode its `src/termio/Termio.zig`, and the OSC 52 read
+/// and write its `src/Surface.zig`, at commit 22f100c6.
 public final class VTHost: @unchecked Sendable {
     /// What the host reports, fixed when it is made, so the reader thread never reads a callback another thread
     /// changes.
@@ -16,6 +16,11 @@ public final class VTHost: @unchecked Sendable {
         var output: @Sendable (Int) -> Void
         /// On the main thread once the client exited: its wait status and its last 4 KB of output.
         var exit: @MainActor @Sendable (Int32, String) -> Void
+        /// On the reader thread, with the lock held: an OSC 52 write to the standard clipboard with its text, and a
+        /// read of it, which the view answers with `osc52Reply` or never. The selection and primary clipboards are not
+        /// nmux's.
+        var clipboardWrite: @Sendable (String) -> Void
+        var clipboardRead: @Sendable () -> Void
 #if NMUX_SELFTEST
         /// On the reader thread, with the lock held, when a mode 2026 hold begins or ends.
         var hold: @Sendable (Bool) -> Void = { _ in }
@@ -33,6 +38,10 @@ public final class VTHost: @unchecked Sendable {
     private var heldSince = 0.0
     /// Replies `write_pty` queued while the terminal parsed, sent once the lock is released.
     private var replies: [UInt8] = []
+    /// libghostty-vt answers a read the host left unanswered with an empty clipboard, in the write after the read
+    /// callback; nmux drops that OSC 52 reply, so a read answers later or never, as Ghostty's. The flag ends with the
+    /// parsed chunk.
+    private var dropReply = false
     /// The write lock guards the pty: every write, the resize's ioctl and the close, after which fd is -1.
     private let writeLock = NSLock()
     private var fd: Int32
@@ -82,8 +91,12 @@ public final class VTHost: @unchecked Sendable {
     private func configure() {
         set(GHOSTTY_TERMINAL_OPT_USERDATA, Unmanaged.passUnretained(self).toOpaque())
         let writePty: GhosttyTerminalWritePtyFn = { _, ud, data, len in
+            let h = host(ud)
             guard let data else { return }
-            host(ud).replies.append(contentsOf: UnsafeBufferPointer(start: data, count: len))
+            if h.dropReply, len >= 5, Array(UnsafeBufferPointer(start: data, count: 5)) == Array("\u{1b}]52;".utf8) {
+                return h.dropReply = false
+            }
+            h.replies.append(contentsOf: UnsafeBufferPointer(start: data, count: len))
         }
         let size: GhosttyTerminalSizeFn = { _, ud, out in
             out?.pointee = host(ud).size
@@ -112,6 +125,30 @@ public final class VTHost: @unchecked Sendable {
             h.handlers.hold(held)
 #endif
         }
+        let clipboardWrite: GhosttyTerminalClipboardWriteFn = { _, ud, request in
+            guard let w = request?.pointee else { return }
+            var reply = GhosttyClipboardWriteReply(size: MemoryLayout<GhosttyClipboardWriteReply>.size,
+                                                   result: GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED, remember: false)
+            // OSC 52 discards the reply, so it only says the write went on to the main thread, which may still drop it.
+            if w.location == GHOSTTY_CLIPBOARD_LOCATION_STANDARD {
+                // No contents clears the clipboard, which leaves it empty as an empty text does.
+                let data = w.contents_len > 0 ? w.contents?.pointee.data : nil
+                host(ud).handlers.clipboardWrite(data.flatMap { d in
+                    d.ptr.map { String(decoding: UnsafeBufferPointer(start: $0, count: d.len), as: UTF8.self) }
+                } ?? "")
+                reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS
+            }
+            w.reply?(request, &reply)
+        }
+        // limitation: every standard read is answered as OSC 52, since tmux passes no OSC 5522 and no mode 5522 to its
+        // client; tell the protocols apart once nmux runs a program without tmux.
+        let clipboardRead: GhosttyTerminalClipboardReadFn = { _, ud, request in
+            let h = host(ud)
+            h.dropReply = true
+            if request?.pointee.location == GHOSTTY_CLIPBOARD_LOCATION_STANDARD { h.handlers.clipboardRead() }
+        }
+        set(GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, unsafeBitCast(clipboardWrite, to: UnsafeRawPointer.self))
+        set(GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ, unsafeBitCast(clipboardRead, to: UnsafeRawPointer.self))
         let version: GhosttyTerminalXtversionFn = { _, ud in
             let v = host(ud).xtversion
             return GhosttyString(ptr: v.baseAddress, len: v.count)
@@ -131,7 +168,8 @@ public final class VTHost: @unchecked Sendable {
         var clusters = GhosttyTerminalModeConfig(mode: ghostty_mode_new(2027, false), value: true)
         set(GHOSTTY_TERMINAL_OPT_MODE, &clusters)
         let (fg, bg) = fallbackDefaults(dark: false)
-        setDefaults(TerminalColors(foreground: fg, background: bg, cursor: fg, palette: fallbackPalette, dark: false))
+        setDefaults(TerminalColors(foreground: fg, background: bg, cursor: fg, palette: fallbackPalette,
+                                   selectionBackground: nil, selectionForeground: nil, dark: false))
         Array("xterm-256color".utf8).withUnsafeBufferPointer { p in // the terminal copies the name
             var name = GhosttyString(ptr: p.baseAddress, len: p.count)
             set(GHOSTTY_TERMINAL_OPT_TERMINFO_NAME, &name)
@@ -169,6 +207,18 @@ public final class VTHost: @unchecked Sendable {
         }
     }
 
+    /// The window gaining or losing key, reported to the client when it set mode 1004.
+    func reportFocus(_ focused: Bool) {
+        locked { t in
+            guard modeSet(t, 1004) else { return }
+            var buf = [CChar](repeating: 0, count: 8), n = 0
+            if ghostty_focus_encode(focused ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST, &buf, buf.count,
+                                    &n) == GHOSTTY_SUCCESS {
+                replies += buf[..<n].map { UInt8(bitPattern: $0) }
+            }
+        }
+    }
+
     private func read() {
         var buf = [UInt8](repeating: 0, count: 64 * 1024), tail: [UInt8] = []
         while true {
@@ -176,7 +226,12 @@ public final class VTHost: @unchecked Sendable {
             if n < 0 && errno == EINTR { continue }
             // EOF, or EIO once the client exited; any other error ends the read too, since the pty is gone.
             if n <= 0 { break }
-            buf.withUnsafeBufferPointer { b in locked { ghostty_terminal_vt_write($0, b.baseAddress, n) } }
+            buf.withUnsafeBufferPointer { b in
+                locked {
+                    ghostty_terminal_vt_write($0, b.baseAddress, n)
+                    dropReply = false
+                }
+            }
             keepTail(&tail, buf[..<n])
             handlers.output(n)
         }
@@ -228,6 +283,11 @@ public final class VTHost: @unchecked Sendable {
             }
             return fd >= 0
         } ?? false
+    }
+
+    /// Pastes `text` as the terminal's modes ask, from the main thread.
+    func paste(_ text: String, paneBracketed: Bool, allowUnsafe: Bool) -> PasteOutcome {
+        locked { pasteText($0, text, paneBracketed: paneBracketed, allowUnsafe: allowUnsafe) }
     }
 
     /// Runs `body` with the terminal locked, then sends what its callbacks queued.

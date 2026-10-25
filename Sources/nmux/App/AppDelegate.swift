@@ -7,8 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
     /// The window's content view, which holds the terminal and the card.
     var content: NSView?
-    /// The Session's terminal.
+    /// The Session's terminal, and the tmux and the Session it is attached to, for the shortcuts that reach the server.
     var terminal: TerminalView?
+    var tmux: Tmux?
+    var session: SessionID?
     let appearance = Appearance()
 #if NMUX_SELFTEST
     var vtSelfTest: VTSelfTest?
@@ -24,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var brew: Brew?
     var brewOutput = Data()
     var brewPID: pid_t?
+    /// The answer a clipboard card waits for.
+    var clipboardAnswer: ((Bool) -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let (window, frame) = makeWindow()
@@ -102,11 +106,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let action = item.representedObject as? AppAction { perform(action) }
     }
 
-    /// An app shortcut, from the menu.
+    /// An app shortcut, from the menu or the view.
     func perform(_ action: AppAction) {
         selfTestLog("shortcut \(action.name)")
+        // A card's keys wait for it, and the menu's Paste and Clear reach the terminal past its focus.
+        if card != nil, [.paste, .clear].contains(action) { return }
         switch action {
         case .quit: quit()
+        case .clear: clear()
+        case .copy: terminal?.copySelection()
+        case .paste: paste()
+        case .selectAll: terminal?.selectAll()
+        }
+    }
+
+    /// Pastes into the active pane, after tmux says whether it turned bracketed paste on; a card that showed meanwhile
+    /// keeps the keys, and the paste with them.
+    func paste() {
+        guard let tmux, let session else { return }
+        DispatchQueue.global().async {
+            let flag = tmux.run(["display-message", "-p", "-t", "\(session)", "#{bracket_paste_flag}"]).out
+            onMain { if self.card == nil { self.terminal?.paste(paneBracketed: flag.hasPrefix("1")) } }
+        }
+    }
+
+    /// Clears the active pane's scrollback, then Ctrl+L has the shell redraw its prompt on a clean screen.
+    func clear() {
+        guard let tmux, let session, let host = terminal?.host else { return }
+        DispatchQueue.global().async {
+            _ = tmux.run(["clear-history", "-t", "\(session)"])
+            host.send([0x0C])
         }
     }
 
@@ -126,15 +155,15 @@ extension AppDelegate {
         "WezTerm (nmux \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"))"
 
     /// The Session's terminal, on a plain tmux client attached to it, at the window's grid. The client declares
-    /// overline, which xterm-256color's terminfo lacks, or tmux drops SGR 53 before nmux sees it. The terminal goes
-    /// under the card. The client ends with 0 on detach or when its Session dies, and nmux with
+    /// overline and hyperlinks, which xterm-256color's terminfo lacks, or tmux drops SGR 53 and OSC 8 before nmux sees
+    /// them. The terminal goes under the card. The client ends with 0 on detach or when its Session dies, and nmux with
     /// it; any other end shows the client card with the client's last line.
     func start(_ tmux: Tmux, session id: SessionID, grid: Grid) {
         guard let font, let content else { return }
         let view: TerminalView
         do {
             view = try TerminalView(argv: [tmux.path] + tmux.base
-                                        + ["-T", "overline", "attach-session", "-t", "\(id)"],
+                                        + ["-T", "overline,hyperlinks", "attach-session", "-t", "\(id)"],
                                     grid: grid, context: sharedContext(), font: font,
                                     xtversion: Self.xtversion)
         } catch {
@@ -148,9 +177,15 @@ extension AppDelegate {
             self.attachFailed(.client(lastLines(output, 1)))
         }
         appearance.dress(view)
+        view.askClipboard = { self.ask($0, $1) }
         view.onScale = { [weak self] in self?.rescale($0) }
         view.onSnap = { [weak self, weak view] in
             if let self, let window = self.window, let view { snap(window, font: view.font) }
+        }
+        view.shortcut = { event in
+            guard let s = shortcut(event.characters(byApplyingModifiers: []), event.modifierFlags) else { return false }
+            self.perform(s.action)
+            return true
         }
 #if NMUX_SELFTEST
         vtSelfTest = VTSelfTest(view, rescale: { self.rescale($0) }, appearance: { dark in
@@ -162,7 +197,7 @@ extension AppDelegate {
         view.autoresizingMask = [.width, .height]
         content.addSubview(view, positioned: .below, relativeTo: card)
         window?.makeFirstResponder(view)
-        terminal = view
+        (terminal, self.tmux, session) = (view, tmux, id)
         view.host.start()
         selfTestLog("attached \(id)")
     }

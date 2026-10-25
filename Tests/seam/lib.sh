@@ -4,30 +4,70 @@
 # Prerequisites:
 # - tmux 3.4 or newer on PATH.
 # - A Retina screen, where the windows open: the self-test build opens on the screen of the highest scale. With only
-#   1x screens, `scale 1 measures the cell again` fails.
+#   1x screens, `scale 1 measures the cell again` and the candidate window's rect fail.
 # - About two and a half minutes for every run.
 #
-# The self-test. The self-test build logs `selftest: <event>` lines on stderr, which `launch` keeps
+# The self-test's command language. The self-test build logs `selftest: <event>` lines on stderr, which `launch` keeps
 # in build/seam/<run>.log. Its tmux runs on the private server `-L nmux-test -f /dev/null`.
 #
 # Variables:
 #   NMUX_SELFTEST_SCREEN=<file>    each time output settles for 0.4 s, the screen's text is written to the file.
 #   NMUX_SELFTEST_CELLS="x,y ..."  the cells, apart by spaces, logged each time the frames settle for 0.4 s.
+#   NMUX_SELFTEST_KEYS=<file>      each line the file gains is one command, below.
 #   NMUX_SELFTEST_PRESS=<action>   pressed on every card that offers it, a moment after the card shows.
 #   NMUX_SELFTEST_FONT=<file>      a face file in the app's Resources/Fonts to draw in, in place of SF Mono.
 #   NMUX_SELFTEST_NO_KNOWN_PATHS   hides the known paths of tmux, so the login shell alone decides.
+#   NMUX_SELFTEST_OPTION_AS_ALT=<false|true|left|right>, NMUX_SELFTEST_COPY_ON_SELECT=true,
+#   NMUX_SELFTEST_CLIPBOARD_WRITE=<allow|deny|ask>, NMUX_SELFTEST_CLIPBOARD_READ=<allow|deny|ask>
+#                                  the terminal's input settings.
+#   NMUX_SELFTEST_SELECTION_COLORS="<rrggbb> <rrggbb>"
+#                                  the selection's background and text.
 #
 # On its own, the self-test:
 #   - logs the bytes parsed each time output settles for 0.4 s; the first time, it probes the terminal.
 #   - asks every 0.1 s whether a hold still stands.
 #   - logs the named cells, the rows the last rebuild shaped and the cursor each time the frames settle for 0.4 s.
-#   - reads one frame back the first time the first named cell holds a glyph.
+#   - reads one frame back the first time the first named cell holds a glyph, and again after each commit.
+#   - logs `selection <x0>,<y0>-<x1>,<y1>` or `selection none` for each settled frame whose selection differs from the
+#     last logged one, and reads a frame back again.
+#   - logs `key <keycode> <mods> -> <hex>` for each key the view sends, `none` when the encoder made no bytes.
+#   - logs `preedit <hex>` for each marked text change, empty when it goes, and `commit <hex>` for each commit.
+#   - logs `mouse <action> <button> <col>,<row> -> <hex>` for each mouse report, and `open <url>` for each link opened,
+#     the open skipped.
+#   - copies to a pasteboard of its own and logs `copy <hex>` for each copy.
+#   - logs `paste <hex> bracketed=<yes|no>` for each paste sent, whether the pane turned bracketed paste on.
+#   - logs `osc52 write <hex>` for each OSC 52 write that reached the pasteboard, and `osc52 read <hex>` for each OSC 52
+#     read answered, `empty` for no text, or `osc52 read none` for no reply.
 #
 # Signals:
 #   SIGUSR1   logs the longest gap between presented frames since the last SIGUSR1, then the frames presented so far.
 #   SIGUSR2   takes the next resize step: the content three columns and two rows smaller, then half a cell wider than
 #             its grid, then scale 1, then scale 2. Each step reads one frame back again and, 0.5 s later, logs the
 #             content's size, grid and cell.
+#
+# NMUX_SELFTEST_KEYS lines:
+#   <keycode> <flags> <chars> [mark:<hex>|insert:<hex>]
+#       One key pressed and let go through NSApp.sendEvent: the keycode in decimal, the modifier flags in hex with
+#       their device masks, the characters as UTF-8 hex or `-` for none. The fourth field is what the text system does
+#       with the key in place of the input source, which a synthetic key never reaches.
+#   mark <hex>          the text input client sets marked text.
+#   insert <hex>        the text input client inserts text outside a key.
+#   rect                logs `rect <x> <y> <w> <h>`, the first rect for an empty range in points from the view's top
+#                       left.
+#   click <left|right|middle> <col>,<row> <flags>
+#                       presses and lets go at the cell's middle. Mouse events go to the view's own handler, since a
+#                       window that is not key takes a click for itself, and carry the time they are made, so clicks
+#                       in one poll repeat.
+#   move <col>,<row> <flags>
+#                       moves the pointer there.
+#   wheel <points> <precise 0|1> <count> <flags>
+#                       scrolls `count` times at the pointer, by whole points or notches.
+#   pointer             logs `pointer <hand|ibeam|other>`, the view's pointer as it stands.
+#   drag <col>,<row> <col>,<row> <flags>
+#                       presses the left button near the first cell's left edge, drags to near the second's right edge
+#                       and lets go there.
+#   pasteboard          logs `pasteboard <hex>` or `pasteboard none`.
+#   pasteboard <hex>    writes that string to the pasteboard.
 
 APP=${APP:-build/selftest/nmux.app}
 BIN=$APP/Contents/MacOS/nmux

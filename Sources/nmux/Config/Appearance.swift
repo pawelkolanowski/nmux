@@ -8,17 +8,24 @@ protocol AppearanceHost: AnyObject {
 }
 
 /// The Fallback look for the window's appearance and SF Mono, and the one apply that puts the colours on screen: at
-/// launch before the first Session and on a switch of the appearance. Content, scroll and an open prompt stay.
+/// launch before the first Session and on a switch of the appearance. Content, selection, scroll, marked text and an
+/// open prompt stay.
 final class Appearance {
     weak var host: AppearanceHost?
     /// The colours in force, for the appearance they were resolved for.
     private(set) var theme = Theme(dark: false)
     private var watch: NSKeyValueObservation?
 
-    /// The Fallback look for the window's appearance, or the one given.
+    /// The Fallback look for the window's appearance, or the one given. Under the self-test,
+    /// NMUX_SELFTEST_SELECTION_COLORS gives the selection's colours.
     func loadTheme(dark: Bool? = nil) {
         guard let window = host?.window else { return }
         theme = Theme(dark: dark ?? isDark(window.effectiveAppearance))
+#if NMUX_SELFTEST
+        if let (background, foreground) = SelfTest.selectionColors {
+            (theme.selectionBackground, theme.selectionForeground) = (background, foreground)
+        }
+#endif
     }
 
     /// The Fallback look follows the system appearance live.
@@ -45,8 +52,17 @@ final class Appearance {
         window.contentView.map(redraw)
     }
 
-    /// A new Session's terminal starts in the colours in force.
-    func dress(_ view: TerminalView) { view.setColors(theme.terminal) }
+    /// A new Session's terminal starts in the colours in force. Under the self-test, the `NMUX_SELFTEST_*` variables
+    /// give the input settings; the release build keeps the view's defaults.
+    func dress(_ view: TerminalView) {
+        view.setColors(theme.terminal)
+#if NMUX_SELFTEST
+        if let optionAsAlt = SelfTest.optionAsAlt { view.optionAsAlt = optionAsAlt }
+        view.copyOnSelect = SelfTest.copyOnSelect
+        if let write = SelfTest.clipboardWrite { view.clipboardWrite = write }
+        if let read = SelfTest.clipboardRead { view.clipboardRead = read }
+#endif
+    }
 
     /// SF Mono at 14 pt at the backing scale; SF Mono is the system's monospaced face, which CoreText does not find by
     /// name. Under the self-test, NMUX_SELFTEST_FONT names a face file in the app's Resources/Fonts to draw in instead.

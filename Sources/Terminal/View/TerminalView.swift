@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyVt
 
 /// The view the terminal's state is drawn into, through nmux's Metal 4 renderer. It owns the VT host, takes its colours
 /// and face from the app, and paces the frames: the display link runs while something changes and pauses when a frame
@@ -9,13 +10,60 @@ public final class TerminalView: NSView {
 #if NMUX_SELFTEST
     public weak var observer: TerminalViewObserver?
 #endif
+    /// Which Option is Alt, from `option-as-alt`; false by default, so both Options type.
+    public var optionAsAlt = OptionAsAlt.false
     /// A backing scale the font was not made for: the app hands every view the font of that scale through `setFont`.
     public var onScale: (Double) -> Void = { _ in }
     /// A size that is not whole cells of the font: the app snaps the window to whole cells, and the view then fits the
     /// pty to what the snap left.
     public var onSnap: () -> Void = {}
+    /// The app's shortcuts, asked first for each key pressed: true when the key was one and the app performed it.
+    public var shortcut: (NSEvent) -> Bool = { _ in false }
     /// On the main thread once the client exited: its wait status and its last 4 KB of output.
     public var onExit: (Int32, String) -> Void = { _, _ in }
+    let keys = KeyEncoder()
+    let mouse = MouseEncoder()
+    var wheel = WheelScroll()
+    /// The buttons held, by libghostty-vt's number, and the pointer's last place in the view, which the wheel reports.
+    var buttons = Set<GhosttyMouseButton.RawValue>()
+    var pointerAt = NSPoint.zero
+    /// The cell a Cmd+click pressed, while it waits for its release.
+    var linkPress: SIMD2<Int>?
+    var mouseShape = GHOSTTY_MOUSE_SHAPE_TEXT
+    /// Shift+left selects through libghostty-vt's gesture, while `selecting`; `copy-on-select`, false by default, also
+    /// copies when the mouse lets go.
+    let selectionGesture: SelectionGesture
+    var selecting = false
+    public var copyOnSelect = false
+    /// Where Copy, Paste and OSC 52 read and write; the self-test gives its own, never the author's.
+    var pasteboard = NSPasteboard.general
+    /// `clipboard-write` and `clipboard-read`, Ghostty's defaults.
+    public var clipboardWrite = ClipboardAccess.allow
+    public var clipboardRead = ClipboardAccess.ask
+    /// Asks the author on a card and calls back with the answer, true to go on; with no card, the answer is no.
+    public var askClipboard: (ClipboardAsk, @escaping @MainActor (Bool) -> Void) -> Void = { $1(false) }
+    /// The text input client's marked text; the cells draw it at the cursor.
+    var markedText = "" {
+        didSet {
+            guard markedText != oldValue else { return }
+            // Ghostty leaves out a codepoint of no width.
+            cells.preedit = markedText.unicodeScalars.map(\.value).filter { ghostty_unicode_codepoint_width($0) > 0 }
+            // Marked text that comes or goes drops the selection, as Ghostty's `selection-clear-on-typing`.
+            dropSelection()
+            resume()
+#if NMUX_SELFTEST
+            observer?.preedit(markedText)
+#endif
+        }
+    }
+    /// What `insertText` gives while a key is inside `interpretKeyEvents`, nil outside one.
+    var inserted: [String]?
+    /// A UTF-16 lead surrogate the emoji picker sent alone, waiting for its trail.
+    var leadSurrogate: unichar?
+    /// The keys whose press a shortcut or an edit key took, so their release never reaches the encoder.
+    var taken = Set<UInt16>()
+    /// The focus last reported to the terminal; a notification that keeps it reports nothing.
+    private var reportedFocus: Bool?
     /// A new scale replaces them, with a new font and an empty atlas.
     private(set) var cells: Cells
     /// The GPU state it shares with every terminal, and its own renderer.
@@ -51,7 +99,11 @@ public final class TerminalView: NSView {
 #endif
                 }
             },
-            exit: { status, output in relay.view?.onExit(status, output) })
+            exit: { status, output in relay.view?.onExit(status, output) },
+            // OSC 52 arrives on the reader thread, with the terminal locked; the pasteboard and the card wait for the
+            // main one.
+            clipboardWrite: { text in onMain { relay.view?.clipboardWritten(text) } },
+            clipboardRead: { onMain { relay.view?.clipboardAsked() } })
 #if NMUX_SELFTEST
         handlers.hold = { held in
             if held { onMain { relay.view?.observer?.holdStarted() } }
@@ -59,6 +111,7 @@ public final class TerminalView: NSView {
 #endif
         host = try VTHost(argv: argv, grid: grid, cell: font.cell, handlers: handlers, xtversion: xtversion)
         self.waker = waker
+        selectionGesture = SelectionGesture(host)
         cells = Cells(font: font)
         (self.context, renderer) = (context, try MetalRenderer(context))
         super.init(frame: .zero)
@@ -73,11 +126,14 @@ public final class TerminalView: NSView {
 
     required init?(coder: NSCoder) { fatalError("TerminalView is never decoded") }
 
-    /// The theme's colours: the terminal's defaults and palette under the host's lock, and the text under a block
-    /// cursor; every row draws again.
+    /// The theme's colours: the terminal's defaults and palette under the host's lock, and the selection's; every row
+    /// draws again.
     public func setColors(_ colors: TerminalColors) {
         host.setColors(colors)
-        cells.cursorText = colors.cursorText.map { [$0.r, $0.g, $0.b, 255] }
+        func rgba(_ c: RGB?) -> SIMD4<UInt8>? { c.map { [$0.r, $0.g, $0.b, 255] } }
+        (cells.selectionBackground, cells.selectionForeground) = (rgba(colors.selectionBackground),
+                                                                  rgba(colors.selectionForeground))
+        cells.cursorText = rgba(colors.cursorText)
         cells.restyled = true
         resume()
     }
@@ -86,6 +142,7 @@ public final class TerminalView: NSView {
         super.viewDidMoveToWindow()
         // Out of its window the view draws nothing, and its link, timers and observers would keep it alive or waking.
         guard let window else {
+            dropMarkedText()
             link?.invalidate()
             link = nil
             blink?.invalidate()
@@ -106,7 +163,7 @@ public final class TerminalView: NSView {
         keyObservers = [(NSWindow.didBecomeKeyNotification, true),
                         (NSWindow.didResignKeyNotification, false)].map { name, focused in
             NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.setFocused(focused) }
+                MainActor.assumeIsolated { self?.keyChanged(focused) }
             }
         }
         setFocused(window.isKeyWindow)
@@ -193,7 +250,9 @@ public final class TerminalView: NSView {
     /// whole cells of the new cell, and the terminal and the pty take its grid.
     public func setFont(_ font: Font) {
         let next = Cells(font: font)
-        (next.focused, next.blinkVisible, next.cursorText) = (cells.focused, cells.blinkVisible, cells.cursorText)
+        (next.focused, next.blinkVisible, next.preedit) = (cells.focused, cells.blinkVisible, cells.preedit)
+        (next.selectionBackground, next.selectionForeground) = (cells.selectionBackground, cells.selectionForeground)
+        next.cursorText = cells.cursorText
         cells = next
         renderer.dropAtlas()
         renderer.layer.contentsScale = font.scale
@@ -211,12 +270,22 @@ public final class TerminalView: NSView {
         resume()
     }
 
+    /// The window became or resigned key: the cursor follows, and the terminal hears of a change of focus.
+    private func keyChanged(_ focused: Bool) {
+        if !focused { dropMarkedText() }
+        setFocused(focused)
+        guard focused != reportedFocus else { return }
+        reportedFocus = focused
+        host.reportFocus(focused)
+    }
+
     func resume() { link?.isPaused = false }
 
     /// Draws when the terminal changed and pauses the frames when it did not. A mode 2026 hold keeps the cells last
     /// drawn and pauses too: output wakes the frames, and so does one timer past the hold's 1 s, by which time
     /// `holding` has ended it, so the end is drawn even when output stops.
     @objc func step() {
+        syncPointerShape()
         if host.holding() {
             link?.isPaused = true
             if holdEnd == nil {

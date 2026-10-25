@@ -1,8 +1,9 @@
 import AppKit
 import Terminal
 
-/// A card nmux draws in the theme over a dim of the window: a title, an optional detail, command lines to copy and a
-/// row of buttons, right-aligned, the default one filled with the accent. No system control draws any of it.
+/// A card nmux draws in the theme over a dim of the window: a title, an optional detail, an optional excerpt, command
+/// lines to copy and a row of buttons, right-aligned, the default one filled with the accent. No system control draws
+/// any of it.
 final class CardView: NSView {
     var state: CardState {
         didSet {
@@ -19,6 +20,8 @@ final class CardView: NSView {
     private let titleFont = NSFont.boldSystemFont(ofSize: 15)
     private let textFont = NSFont.systemFont(ofSize: 13)
     private let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    /// The terminal's face, for the excerpt.
+    var excerptFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     private let pad: CGFloat = 24, gap: CGFloat = 12, buttonHeight: CGFloat = 28
     private static let spinner = Array("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
@@ -62,7 +65,7 @@ final class CardView: NSView {
     static func width(in width: CGFloat) -> CGFloat { min(520, width - 32) }
 
     private struct Layout {
-        var panel = NSRect.zero, title = NSRect.zero, detail = NSRect.zero
+        var panel = NSRect.zero, title = NSRect.zero, detail = NSRect.zero, excerpt = NSRect.zero
         var detailText: String?
         var commands: [(line: NSRect, copy: NSRect)] = []
         var buttons: [NSRect] = []
@@ -91,6 +94,10 @@ final class CardView: NSView {
             l.detail = NSRect(x: pad, y: y + gap, width: inner, height: min(h, max(room, 0)))
             y += gap + l.detail.height
         }
+        if let excerpt = state.excerpt {
+            l.excerpt = NSRect(x: pad, y: y + gap, width: inner, height: height(excerpt, excerptFont, inner))
+            y += gap + l.excerpt.height
+        }
         for command in state.commands {
             let lineWidth = inner - copyWidth - gap, h = height(command, codeFont, lineWidth)
             let row = max(h, buttonHeight)
@@ -116,16 +123,18 @@ final class CardView: NSView {
         l.panel = place(NSRect(x: 0, y: 0, width: width, height: y))
         l.title = place(l.title)
         l.detail = place(l.detail)
+        l.excerpt = place(l.excerpt)
         l.commands = l.commands.map { (place($0.line), place($0.copy)) }
         l.buttons = l.buttons.map(place)
         return l
     }
 
-    /// The panel's height without its title and detail: the padding, the command lines and the buttons.
+    /// The panel's height without its title and detail: the padding, the excerpt, the command lines and the buttons.
     private func restHeight(_ inner: CGFloat) -> CGFloat {
         let lineWidth = inner - copyWidth - gap
         let commands = state.commands.reduce(0) { $0 + gap + max(height($1, codeFont, lineWidth), buttonHeight) }
-        return 2 * pad + commands + (state.actions.isEmpty ? 0 : 2 * gap + buttonHeight)
+        let excerpt = state.excerpt.map { gap + height($0, excerptFont, inner) } ?? 0
+        return 2 * pad + excerpt + commands + (state.actions.isEmpty ? 0 : 2 * gap + buttonHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -141,6 +150,7 @@ final class CardView: NSView {
         panel.stroke()
         text(state.title, titleFont, fg, in: l.title)
         if let detail = l.detailText { text(detail, textFont, fg, in: l.detail) }
+        if let excerpt = state.excerpt { text(excerpt, excerptFont, fg, in: l.excerpt) }
         for (i, (command, rects)) in zip(state.commands, l.commands).enumerated() {
             text(command, codeFont, fg, in: rects.line)
             button(copied == i ? "Copied" : "Copy", filled: false, in: rects.copy, theme, bg)
@@ -154,6 +164,7 @@ final class CardView: NSView {
         let point = convert(event.locationInWindow, from: nil), l = cardLayout()
         if let i = l.commands.firstIndex(where: { $0.copy.contains(point) }) { return copy(i) }
         if let i = l.buttons.firstIndex(where: { $0.contains(point) }) { return press(state.actions[i]) }
+        if !l.panel.contains(point), let escape = state.escape, escape != .quit { press(escape) }
     }
 
     private func copy(_ i: Int) {

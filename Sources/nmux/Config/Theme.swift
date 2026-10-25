@@ -6,7 +6,7 @@ import Terminal
 nonisolated struct Theme: Equatable, Sendable {
     var background, foreground, cursorColor: RGB
     /// Nil where the text under a block cursor takes the background in force, which a program may change.
-    var cursorText: RGB?
+    var cursorText, selectionBackground, selectionForeground: RGB?
     var palette: [RGB]
     var accent: RGB
     var dark: Bool
@@ -21,6 +21,7 @@ nonisolated struct Theme: Equatable, Sendable {
 
     var terminal: TerminalColors {
         TerminalColors(foreground: foreground, background: background, cursor: cursorColor, palette: palette,
-                       cursorText: cursorText, dark: dark)
+                       cursorText: cursorText, selectionBackground: selectionBackground,
+                       selectionForeground: selectionForeground, dark: dark)
     }
 }
