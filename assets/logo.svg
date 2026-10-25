@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="sakura" x1="210" y1="100" x2="780" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FDEBF5"/>
+      <stop offset="0.54" stop-color="#FBDFEF"/>
+      <stop offset="1" stop-color="#F1C9DF"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sakura)"/>
+  <path d="M316 354 C306 345 290 346 281 357 C272 368 274 384 285 393 L422 506 L285 619 C274 628 272 644 281 655 C290 666 306 667 316 658 L477 525 C489 515 489 497 477 487 Z" fill="#352B38"/>
+  <path d="M551 612 H713 C728 612 740 624 740 639 C740 654 728 666 713 666 H551 C536 666 524 654 524 639 C524 624 536 612 551 612 Z" fill="#352B38"/>
+</svg>

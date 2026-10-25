@@ -1,0 +1,10 @@
+This file lists the licence of nmux and of each piece of software nmux bundles. nmux.app carries
+every licence text in this folder:
+
+    Contents/Resources/Licenses/
+
+Each entry names the licence, its file in this repository, and its file in that folder:
+
+- nmux itself: MIT. LICENSE, in the app as nmux-LICENSE.
+- libghostty-vt and the code adapted from Ghostty at commit 22f100c6: MIT, by Mitchell Hashimoto
+  and the Ghostty contributors. vendor/LICENSE-ghostty, in the app as ghostty-LICENSE.

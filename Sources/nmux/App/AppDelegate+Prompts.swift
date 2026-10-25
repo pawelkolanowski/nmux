@@ -1,0 +1,85 @@
+import AppKit
+import Terminal
+
+/// The cards: a failed attach's and brew's install. One card shows at a time, over the window, and takes the keys
+/// while it shows.
+extension AppDelegate {
+    /// Every failure shows its card. The brew lookup may wait 2 s on the login shell, so it runs off the main thread,
+    /// and only for a failure brew can fix.
+    nonisolated func attachFailed(_ failure: AttachFailure) {
+        selfTestLog("failure \(failure.log)")
+        DispatchQueue.global().async {
+            let brew = brewArguments(failure).flatMap { arguments in
+                findBrew().map { Brew(path: $0, arguments: arguments) }
+            }
+            onMain {
+                self.brew = brew
+                self.showCard(cardState(failure, brew: brew != nil))
+            }
+        }
+    }
+
+    func showCard(_ state: CardState) {
+        guard let content else { return }
+        if card?.state.name != state.name { selfTestLog("card \(state.name)") }
+        if let card {
+            card.state = state
+        } else {
+            let card = CardView(state) { self.press($0) }
+            card.frame = content.bounds
+            content.addSubview(card)
+            // The card fades in over its dim. Core Animation's own fade, since AppKit's animator leaves the alpha at
+            // its start while the window does not show.
+            card.wantsLayer = true
+            let fade = CABasicAnimation(keyPath: "opacity")
+            (fade.fromValue, fade.duration) = (0, 0.14)
+            card.layer?.add(fade, forKey: "fade")
+            window?.makeFirstResponder(card)
+            self.card = card
+        }
+#if NMUX_SELFTEST
+        // The self-test presses NMUX_SELFTEST_PRESS on every card that offers it, a moment after it shows.
+        if let name = SelfTest.press, let action = CardAction(rawValue: name), state.actions.contains(action) {
+            onMain(after: 0.2) { if self.card?.state == state { self.press(action) } }
+        }
+#endif
+    }
+
+    func press(_ action: CardAction) {
+        selfTestLog("press \(action.rawValue)")
+        switch action {
+        case .quit: quit()
+        case .restart: restart()
+        case .install: if let brew { install(brew) }
+        }
+    }
+
+    /// The lookup, the version check and the attach again, in place; a failure brings the card back.
+    func restart() {
+        card?.removeFromSuperview()
+        card = nil
+        if let window { attach(window) }
+    }
+
+    /// The card shows brew's latest line while it runs; exit 0 restarts, anything else shows its last lines.
+    func install(_ brew: Brew) {
+        brewOutput = Data()
+        showCard(installingCard(""))
+        do {
+            brewPID = try brew.run(onOutput: { data in
+                onMain {
+                    self.brewOutput += data
+                    self.showCard(installingCard(lastLines(String(decoding: self.brewOutput, as: UTF8.self), 1)))
+                }
+            }, onExit: { status in
+                onMain {
+                    self.brewPID = nil
+                    if status == 0 { return self.restart() }
+                    self.showCard(installFailedCard(lastLines(String(decoding: self.brewOutput, as: UTF8.self), 5)))
+                }
+            })
+        } catch {
+            showCard(installFailedCard("\(error)"))
+        }
+    }
+}

@@ -1,0 +1,11 @@
+# libghostty-vt as built by Ghostty's own CI (release-tip.yml, build-lib-vt-xcframework).
+# A bump replaces the zip, its .minisig and this file together, once the new zip passes its signature:
+#   minisign -Vm vendor/ghostty-vt.xcframework.zip -x vendor/ghostty-vt.xcframework.zip.minisig -P <minisign-key>
+# The build checks only the sha256, so it never needs minisign.
+commit = 22f100c6367045bb5fc86172f837047dee2f7670
+date = 2026-10-23
+url = https://tip.files.ghostty.org/22f100c6367045bb5fc86172f837047dee2f7670/ghostty-vt.xcframework.zip
+sha256 = bc52caabccf231fb3a8c678fff367eab6456f09f0ce313ec421a383a812ddea4
+size = 16037881
+signature = vendor/ghostty-vt.xcframework.zip.minisig
+minisign-key = RWQlAjJC23149WL2sEpT/l0QKy7hMIFhYdQOFy0Z7z7PbneUgvlsnYcV
