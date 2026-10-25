@@ -47,7 +47,9 @@ public final class VTHost: @unchecked Sendable {
     /// The client's tty, the name tmux knows it by; each restart takes a new pty. `restart` runs on the main thread, so
     /// read it there.
     public private(set) var tty: String
-    /// The write lock guards the pty: every write, the resize's ioctl and the close, after which fd is -1.
+    /// The write lock guards the pty: every write, the resize's ioctl and the close, after which fd is -1. The
+    /// terminal's lock guards the pid, 0 once the reader reaped the client, so a hangup never reaches a recycled pid
+    /// and never waits on a write that tmux is slow to read.
     private let writeLock = NSLock()
     private var fd: Int32
     /// `restart` replaces the client only once the reader has ended, so the reader reads them unlocked.
@@ -106,7 +108,7 @@ public final class VTHost: @unchecked Sendable {
         precondition(self.fd < 0, "restart while the client runs")
         (self.fd, self.tty) = (fd, tty)
         writeLock.unlock()
-        self.pid = pid
+        lock.withLock { self.pid = pid }
         running = true
         start()
     }
@@ -262,6 +264,7 @@ public final class VTHost: @unchecked Sendable {
         }
         var status: Int32 = 0
         while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+        lock.withLock { pid = 0 }
         writeLock.lock()
         close(fd)
         fd = -1
@@ -271,6 +274,12 @@ public final class VTHost: @unchecked Sendable {
             running = false
             exit(status, output)
         }
+    }
+
+    /// Hangs up the client, as closing its terminal would; the reader then ends and the exit handler follows. A client
+    /// already reaped gets nothing.
+    public func hangUp() {
+        lock.withLock { if pid > 0 { kill(pid, SIGHUP) } }
     }
 
     /// Writes `bytes` to the client, from any thread: at once, unless it is over 64 KB or a write waits on the writer

@@ -27,7 +27,7 @@ nonisolated func activeIndex(old: [SessionID], new: [SessionID], active: Session
 
 /// What a listed Session does once its client exits.
 nonisolated enum ClientEnd: Equatable {
-    /// Nothing: the client runs, or it waits for a key already.
+    /// Nothing: the client runs, it waits for a key already, or nmux is killing the Session.
     case none
     /// The client failed within a second of its start: tmux's error stays on screen and a key retries.
     case wait
@@ -35,8 +35,8 @@ nonisolated enum ClientEnd: Equatable {
     case attach
 }
 
-nonisolated func clientEnd(exited: Bool, waiting: Bool, ranFor seconds: TimeInterval) -> ClientEnd {
-    if !exited || waiting { return .none }
+nonisolated func clientEnd(exited: Bool, waiting: Bool, killing: Bool, ranFor seconds: TimeInterval) -> ClientEnd {
+    if !exited || waiting || killing { return .none }
     return seconds < 1 ? .wait : .attach
 }
 
@@ -60,6 +60,22 @@ nonisolated func created(ok: Bool, lines: [String]) -> Created {
     if ok, let id = lowestSession(lines.joined(separator: "\n")) { return .session(id) }
     let error = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     return .refused(ok || error.isEmpty ? "tmux did not create the Session." : error)
+}
+
+/// Whether nmux checks a move tmux made of a Session's client: a move to its own Session is nmux's own switch back, and
+/// a Session being killed is left alone.
+nonisolated func checksMove(own: SessionID, target: SessionID, killing: Bool) -> Bool {
+    own != target && !killing
+}
+
+/// The reasons a quit Apple event carries for a shutdown, a restart and a logout, as Ghostty reads them (`why?`).
+nonisolated let systemQuitReasons: Set<UInt32> = [0x7368_7574, 0x7265_7374, 0x726c_676f] // 'shut', 'rest', 'rlgo'
+
+/// Whether a quit asks on the closing card: the Dock's Quit, a quit Apple event with no such reason, does; a shutdown,
+/// restart or logout never does, nor do nmux's own quits (SIGTERM, an empty list, a server that is gone, a card's
+/// answer).
+nonisolated func quitAsks(own: Bool, reason: UInt32?) -> Bool {
+    !own && !(reason.map(systemQuitReasons.contains) ?? false)
 }
 
 /// What a bell does: a Session that is not shown takes the Bell mark, and while nmux is not the front app the Dock icon

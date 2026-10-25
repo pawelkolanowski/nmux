@@ -6,7 +6,7 @@ import AppKit
 /// What an app shortcut does. Its name is the self-test's.
 nonisolated enum AppAction: Hashable, Sendable {
     case quit, copy, paste, selectAll, clear
-    case newSession, previousSession, nextSession, session(Int), lastSession
+    case newSession, closeSession, closeNmux, previousSession, nextSession, session(Int), lastSession
 
     var name: String {
         switch self {
@@ -16,6 +16,8 @@ nonisolated enum AppAction: Hashable, Sendable {
         case .selectAll: "select-all"
         case .clear: "clear"
         case .newSession: "new-session"
+        case .closeSession: "close-session"
+        case .closeNmux: "close-nmux"
         case .previousSession: "previous-session"
         case .nextSession: "next-session"
         case .session(let n): "session-\(n)"
@@ -38,7 +40,8 @@ nonisolated struct Shortcut: Sendable {
     let action: AppAction
 }
 
-/// The fixed table, on Ghostty's pattern; nothing else is bound, so Cmd+=, Cmd+- and Cmd+0 go to the terminal.
+/// The fixed table, on Ghostty's pattern; nothing else is bound, so Cmd+=, Cmd+- and Cmd+0 go to the terminal. Cmd+W
+/// keeps the title Close Session although it kills, as the pill asks first.
 nonisolated let shortcuts: [Shortcut] = [
     Shortcut(menu: .nmux, title: "Quit nmux", key: "q", flags: .command, action: .quit),
     Shortcut(menu: .edit, title: "Copy", key: "c", flags: .command, action: .copy),
@@ -46,6 +49,8 @@ nonisolated let shortcuts: [Shortcut] = [
     Shortcut(menu: .edit, title: "Select All", key: "a", flags: .command, action: .selectAll),
     Shortcut(menu: .edit, title: "Clear", key: "k", flags: .command, action: .clear),
     Shortcut(menu: .sessions, title: "New Session", key: "t", flags: .command, action: .newSession),
+    Shortcut(menu: .sessions, title: "Close Session", key: "w", flags: .command, action: .closeSession),
+    Shortcut(menu: .sessions, title: "Close nmux", key: "w", flags: [.command, .shift], action: .closeNmux),
     Shortcut(menu: .sessions, title: "Previous Session", key: "[", flags: [.command, .shift], action: .previousSession),
     Shortcut(menu: .sessions, title: "Next Session", key: "]", flags: [.command, .shift], action: .nextSession),
 ] + (1...8).map { Shortcut(menu: .sessions, title: "Session \($0)", key: "\($0)", flags: .command,

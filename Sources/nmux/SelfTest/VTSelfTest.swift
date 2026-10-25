@@ -12,9 +12,11 @@ final class VTSelfTest: TerminalViewObserver {
     private let perform: (AppAction) -> Void
     /// Hands every terminal the font of that backing scale, as a move to another screen does.
     private let rescale: (Double) -> Void
+    private let card: () -> CardView?
     /// Resolves the theme for that appearance, nil for the window's own, and applies it, as a switch of the system's
     /// does.
     private let appearance: (Bool?) -> Void
+    private var cardPoint: NSPoint?
     private var parsed = 0, outputs = 0, probed = false, watchingHold = false
     private var drawnFrames = 0, readBack = false
     private var lastFrame = CACurrentMediaTime(), longestGap = 0.0
@@ -30,10 +32,10 @@ final class VTSelfTest: TerminalViewObserver {
     private let pasteboard = NSPasteboard.withUniqueName()
 
     init(_ view: TerminalView, bar: SessionBar, create: @escaping (String) -> Void,
-         perform: @escaping (AppAction) -> Void, rescale: @escaping (Double) -> Void,
+         perform: @escaping (AppAction) -> Void, rescale: @escaping (Double) -> Void, card: @escaping () -> CardView?,
          appearance: @escaping (Bool?) -> Void) {
         (self.view, self.bar, self.create, self.perform, self.rescale) = (view, bar, create, perform, rescale)
-        self.appearance = appearance
+        (self.card, self.appearance) = (card, appearance)
         named = (SelfTest.cells ?? "").split(separator: " ").compactMap { pair in
             let xy = pair.split(separator: ",").compactMap { Int($0) }
             return xy.count == 2 ? (xy[0], xy[1]) : nil
@@ -128,7 +130,18 @@ final class VTSelfTest: TerminalViewObserver {
             "rect": { if $0.isEmpty { self.rect() } },
             "create": { self.create($0.joined(separator: " ")) },
             "pill": { args in self.pill(args) { self.click($0, "pill \(args[0])") } },
-            "washback": { if $0.isEmpty { self.washBack() } },
+            "close": { args in
+                if args == ["button"] { return self.bar.window?.performClose(nil) ?? () }
+                self.pill(args) { self.click($0, "close \(args[0])", at: NSPoint(x: 15, y: SessionBar.height / 2)) }
+            },
+            "bin": { args in
+                guard args.count == 1,
+                      let pill = self.bar.pills.first(where: { "\($0.session.info.id)" == args[0] }) else { return }
+                let bin = binRect(pill.bounds)
+                self.click(pill, "bin", at: NSPoint(x: bin.midX, y: bin.midY))
+            },
+            "washback": { self.washBack($0) },
+            "box": { if $0.isEmpty { self.box() } },
             "plus": { args in
                 if args.isEmpty { self.click(self.bar.plus, "plus") } else if args == ["rest"] { self.bar.plus.enter() }
             },
@@ -181,9 +194,30 @@ final class VTSelfTest: TerminalViewObserver {
         body(bar.pills[n - 1])
     }
 
-    /// `washback`: 2 pt from the bar's right end, toward the accent.
-    private func washBack() {
-        washBack(bar, at: NSPoint(x: bar.bounds.width - 2, y: bar.bounds.midY), toward: ChromeTheme.current.accent)
+    /// `washback`, `washback pill <n>` or `washback card`.
+    private func washBack(_ args: [String]) {
+        switch args {
+        case []:
+            washBack(bar, at: NSPoint(x: bar.bounds.width - 2, y: bar.bounds.midY), toward: ChromeTheme.current.accent)
+        case ["card"]:
+            guard let content = bar.window?.contentView else { return }
+            cardPoint = card()?.defaultPoint ?? cardPoint
+            guard let at = cardPoint else { return }
+            washBack(content, at: content.convert(at, from: nil), toward: ChromeTheme.current.accent)
+        default:
+            guard args.first == "pill" else { return }
+            pill(Array(args.dropFirst())) {
+                washBack($0, at: NSPoint(x: 8, y: $0.bounds.midY), toward: ChromeTheme.current.danger)
+            }
+        }
+    }
+
+    /// Clicks the end of the card's checkbox label through the window's hit test.
+    private func box() {
+        guard let card = card(), let window = card.window, let frameView = window.contentView?.superview else { return }
+        guard frameView.hitTest(frameView.convert(card.boxPoint, from: nil)) === card,
+              let down = mouseEvent(.leftMouseDown, card.boxPoint, [], window) else { return selfTestLog("box missed") }
+        card.mouseDown(with: down)
     }
 
     /// A mouse line, `click`, `move`, `wheel`, `pointer` or `drag` and its words.
@@ -240,14 +274,16 @@ final class VTSelfTest: TerminalViewObserver {
                             to: nil)
     }
 
-    /// A click on the middle of a view in the bar, when the window's hit test finds it there; `<name> missed` when not.
-    private func click(_ target: NSView, _ name: String) {
+    /// A click on a view in the bar, at its middle unless told where, when the window's hit test finds it there;
+    /// `<name> missed` when not. The window's own monitor never sees it, so it answers an asking pill here.
+    private func click(_ target: NSView, _ name: String, at local: NSPoint? = nil) {
         guard let window = bar.window, let frameView = window.contentView?.superview else { return }
-        let at = target.convert(NSPoint(x: target.bounds.midX, y: target.bounds.midY), to: nil)
+        let at = target.convert(local ?? NSPoint(x: target.bounds.midX, y: target.bounds.midY), to: nil)
         guard frameView.hitTest(frameView.convert(at, from: nil)) === target,
               let down = mouseEvent(.leftMouseDown, at, [], window) else {
             return selfTestLog("\(name) missed")
         }
+        bar.clicked(at: at)
         target.mouseDown(with: down)
     }
 

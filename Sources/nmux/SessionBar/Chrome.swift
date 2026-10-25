@@ -47,7 +47,9 @@ func drawSymbol(_ name: String, _ color: NSColor, centre: NSPoint, size: CGFloat
                           width: image.size.width, height: image.size.height))
 }
 
-/// The keys a prompt answers: Return and the keypad's Enter take the default, and Escape dismisses.
+/// The keys a prompt answers: Return and the keypad's Enter take the default, Escape dismisses, Tab moves the focus and
+/// Space presses what it is on.
 enum KeyCode {
     static let `return` = UInt16(kVK_Return), enter = UInt16(kVK_ANSI_KeypadEnter), escape = UInt16(kVK_Escape)
+    static let tab = UInt16(kVK_Tab), space = UInt16(kVK_Space)
 }

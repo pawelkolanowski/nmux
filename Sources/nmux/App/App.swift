@@ -20,7 +20,7 @@ enum App {
         // A write to a closed pipe or pty fails with EPIPE instead of ending nmux.
         signal(SIGPIPE, SIG_IGN)
 
-        // SIGTERM goes through NSApp.terminate, on the main queue, so the app ends as a quit would.
+        // SIGTERM goes through NSApp.terminate, on the main queue, so the app ends as a quit would, without asking.
         signal(SIGTERM, SIG_IGN)
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigterm.setEventHandler { MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.quit() } }

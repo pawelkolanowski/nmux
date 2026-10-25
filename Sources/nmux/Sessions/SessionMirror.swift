@@ -1,13 +1,15 @@
 import Foundation
 import Terminal
 
-/// What the mirror asks of the app: a listed Session's terminal, a Session shown, the bar drawn again, a failure's card
-/// and the quit.
+/// What the mirror asks of the app: a listed Session's terminal, a Session shown, the bar drawn again, a pill's prompt
+/// dropped, a failure's card and the quit.
 protocol SessionMirrorDelegate: AnyObject {
     /// Nil when the terminal cannot start; the mirror then stops until the card's Restart.
     func makeSession(_ info: SessionInfo) -> Session?
     func show(_ id: SessionID)
     func updateBar()
+    /// A pill that asks drops its prompt, as Escape would.
+    func cancelAsking()
     func attachFailed(_ failure: AttachFailure)
     func quit()
 }
@@ -26,11 +28,16 @@ final class SessionMirror {
     /// limitation: one Session waits at a time, so a follow and a `create` in flight together keep the later one; queue
     /// them once that loses a switch.
     private var pendingActive: SessionID?
+    /// Sessions nmux is killing, skipped until tmux no longer lists them, so a list sent before the kill never brings
+    /// them back.
+    private var killed: Set<SessionID> = []
 
     func session(_ id: SessionID) -> Session? { sessions.first { $0.info.id == id } }
     /// The app shows the Session; a list passes the focus from it from then on.
     func activate(_ id: SessionID) { active = id }
     var activeSession: Session? { active.flatMap(session) }
+    /// The Session whose pill asks whether to kill it; one at a time.
+    var asking: Session? { sessions.first { $0.asking } }
 
     /// The control client on the Session nmux found or made; its first list makes every Session's terminal.
     func start(_ tmux: Tmux, session id: SessionID) {
@@ -77,8 +84,10 @@ final class SessionMirror {
     func relist(then: @escaping ([SessionInfo]) -> Void = { _ in }) {
         control?.send("list-sessions -F '\(sessionFormat)'") { ok, lines in
             guard ok else { return }
-            let infos = parseSessions(lines)
+            var infos = parseSessions(lines)
             selfTestLog("sessions " + infos.map { "\($0.id):\($0.name)" }.joined(separator: " "))
+            self.killed.formIntersection(infos.map(\.id))
+            infos.removeAll { self.killed.contains($0.id) }
             if infos.isEmpty { return self.delegate?.quit() ?? () }
             self.mirror(infos)
             then(infos)
@@ -91,6 +100,11 @@ final class SessionMirror {
     private func mirror(_ infos: [SessionInfo]) {
         let old = sessions.map(\.info.id)
         let changes = sessionChanges(from: sessions.map(\.info), to: infos)
+        // A prompt never answers for a Session that changed: one killed or renamed elsewhere drops it.
+        if let asking, changes.removed.contains(asking.info.id)
+            || changes.renamed.contains(where: { $0.id == asking.info.id }) {
+            delegate?.cancelAsking()
+        }
         for id in changes.removed { session(id)?.view.removeFromSuperview() }
         sessions.removeAll { changes.removed.contains($0.info.id) }
         for info in changes.renamed { session(info.id)?.info = info }
@@ -115,14 +129,14 @@ final class SessionMirror {
         endClients()
     }
 
-    /// Each listed Session whose client exited, and that does not wait already, attaches again or waits on tmux's
-    /// error. Every list checks, so an exit whose own list got no answer, as while the control client restarts,
+    /// Each listed Session whose client exited, and that neither waits nor is being killed, attaches again or waits on
+    /// tmux's error. Every list checks, so an exit whose own list got no answer, as while the control client restarts,
     /// is never lost.
     /// limitation: a client's run is counted to the list that finds it exited, not to its exit, so one that failed
     /// within a second while the control client restarted attaches again once before it waits.
     private func endClients() {
         for session in sessions {
-            let end = clientEnd(exited: !session.view.host.running, waiting: session.waiting,
+            let end = clientEnd(exited: !session.view.host.running, waiting: session.waiting, killing: session.killing,
                                 ranFor: Date().timeIntervalSince(session.started))
             if end == .none { continue }
             selfTestLog("ended \(session.info.id) \(end)")
@@ -130,15 +144,53 @@ final class SessionMirror {
         }
     }
 
+    /// A confirmed kill, in order: the Session is marked, so it never attaches again and no follow moves it; it leaves
+    /// the list, unless it is the last, so the empty list after the kill quits nmux; its terminal and its client go,
+    /// the detach ahead of the kill over the same pipe, so tmux never moves the client to another Session; then
+    /// `kill-session`. The mirror confirms the removal once tmux lists the Session gone, and a refused `kill-session`,
+    /// the Session already gone, needs nothing more. The shown Session passes as for any removed one.
+    func kill(_ session: Session) {
+        let id = session.info.id, old = sessions.map(\.info.id)
+        session.killing = true
+        if sessions.count > 1 {
+            sessions.removeAll { $0 === session }
+            killed.insert(id)
+        }
+        session.view.removeFromSuperview()
+        control?.send("detach-client -t \(session.tty)")
+        session.view.host.hangUp()
+        control?.send("kill-session -t '\(id)'")
+        if active == id, let i = activeIndex(old: old, new: sessions.map(\.info.id), active: id),
+           sessions[i] !== session {
+            delegate?.show(sessions[i].info.id)
+        } else {
+            delegate?.updateBar()
+        }
+    }
+
+    /// Every Session it mirrors, killed in their order; `done` runs after the last answer, or as the control client
+    /// ends with a server that ended first. False when there is none to kill.
+    func killAll(then done: @escaping () -> Void) -> Bool {
+        let kills = sessions.map(\.info.id)
+        guard let control, let last = kills.last else { return false }
+        // A Session being killed never follows its client or attaches again, and a list that still names it counts it
+        // gone, so a control client restarted on one quits on the empty list.
+        for session in sessions { session.killing = true }
+        killed.formUnion(kills)
+        for id in kills {
+            control.send("kill-session -t '\(id)'") { _, _ in if id == last { done() } }
+        }
+        return true
+    }
+
     /// tmux moved a client to another Session, as prefix+s or `switch-client` do. A Session's own client, known by its
-    /// tty, goes back to its Session and the target is shown, once it is listed; a move to its own Session is nmux's
-    /// own switch back, and a client moved because its own Session died is left to the list, which removes that
-    /// Session. Any other client, nmux's control client among them, is ignored. `has-session` goes over the same pipe,
-    /// so tmux answers it after its own state changed.
+    /// tty, goes back to its Session and the target is shown, once it is listed; a client moved because its own Session
+    /// died is left to the list, which removes that Session. Any other client, nmux's control client among them, is
+    /// ignored. `has-session` goes over the same pipe, so tmux answers it after its own state changed.
     private func moved(_ client: String, to target: SessionInfo) {
         guard let moved = sessions.first(where: { $0.tty == client }) else { return }
         let own = moved.info
-        guard own.id != target.id else { return }
+        guard checksMove(own: own.id, target: target.id, killing: moved.killing) else { return }
         control?.send("has-session -t '\(own.id)'") { alive, _ in
             guard alive else {
                 // Under `detach-on-destroy off` the client lives on in another Session; it goes with its Session.

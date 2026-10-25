@@ -1,5 +1,9 @@
 import Foundation
 
+/// The closing card: Return closes nmux and leaves every Session running, unless the box is ticked.
+nonisolated let closingCard = CardState(kind: .closing, title: "Close nmux?", actions: [.cancel, .close],
+                                        checkbox: "Kill all Sessions")
+
 /// What a card offers when nothing nmux can run fixes the problem.
 nonisolated let quitRestart: [CardAction] = [.quit, .restart]
 

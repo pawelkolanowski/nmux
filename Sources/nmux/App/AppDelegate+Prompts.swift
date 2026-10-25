@@ -1,9 +1,13 @@
 import AppKit
 import Terminal
 
-/// The cards: a failed attach's and brew's install, and the clipboard's asks. One card shows at a time, over the
-/// window, and takes the keys while it shows.
+/// The cards: a failed attach's and brew's install, the clipboard's asks and Closing nmux. One card shows at a time,
+/// over the window, and takes the keys while it shows.
 extension AppDelegate {
+    var closingCardShows: Bool { card?.state.kind == .closing }
+    /// A card that asks nothing, a failed attach's or brew's install, which a close quits past.
+    var cardOnlyReports: Bool { card != nil && !closingCardShows && clipboardAnswer == nil }
+
     /// Every failure shows its card. The brew lookup may wait 2 s on the login shell, so it runs off the main thread,
     /// and only for a failure brew can fix.
     nonisolated func attachFailed(_ failure: AttachFailure) {
@@ -49,18 +53,21 @@ extension AppDelegate {
         selfTestLog("press \(action.rawValue)")
         switch action {
         case .quit: quit()
+        case .close: closeAnswered(all: card?.state.checked == true)
         case .restart: restart()
         case .install: if let brew { install(brew) }
         case .paste, .allow: answered(true)
-        case .cancel, .deny: answered(false)
+        case .cancel, .deny:
+            if closingCardShows { selfTestLog("answer cancel" + (card?.state.checked == true ? " all" : "")) }
+            answered(false)
         }
     }
 
-    /// A clipboard card over the terminal. A card already showing refuses the ask.
+    /// A clipboard card over the terminal. A card already showing, or an asking pill, refuses the ask.
     /// limitation: one card covers the window, whichever Session asked; give each Session its own card once a hidden
     /// Session's ask misleads.
     func ask(_ ask: ClipboardAsk, _ answer: @escaping (Bool) -> Void) {
-        guard card == nil else { return answer(false) }
+        guard card == nil, mirror.asking == nil else { return answer(false) }
         clipboardAnswer = answer
         switch ask {
         case .paste(let text): showCard(pasteCard(text))

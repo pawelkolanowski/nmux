@@ -19,6 +19,12 @@ nonisolated func cutName(_ name: String, fits: (String) -> Bool) -> String {
     return "…"
 }
 
+/// The bin on an asking pill, which alone kills: 30 pt wide, 7 pt from the pill's top and bottom, 6 pt from its right
+/// end.
+nonisolated func binRect(_ pill: CGRect) -> CGRect {
+    CGRect(x: pill.maxX - 6 - 30, y: pill.minY + 7, width: 30, height: pill.height - 14)
+}
+
 /// The row's edges where pills lie hidden: the left one once scrolled from its start, the right one while pills lie
 /// past the visible end. Within half a point counts as there.
 nonisolated enum Fades: String {
@@ -32,6 +38,17 @@ nonisolated enum Fades: String {
         case (false, false): self = .none
         }
     }
+}
+
+/// What a pill's left 28 pt shows: the close mark on the active pill and the one under the pointer, else the bell dot
+/// on a Session with the Bell mark, else nothing.
+nonisolated enum LeftSlot: Equatable {
+    case close, dot, nothing
+}
+
+nonisolated func leftSlot(active: Bool, hovered: Bool, bell: Bool) -> LeftSlot {
+    if active || hovered { return .close }
+    return bell ? .dot : .nothing
 }
 
 /// What the Keep-awake cup shows and its tip says, from the assertion it holds: an ID is on, none is off.

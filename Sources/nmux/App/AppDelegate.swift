@@ -1,9 +1,9 @@
 import AppKit
 import Terminal
 
-/// The app's lifecycle and the action dispatch. The Sessions live in the mirror, the colours and the font
+/// The app's lifecycle, Closing nmux and the action dispatch. The Sessions live in the mirror, the colours and the font
 /// in the appearance, and the prompts in `AppDelegate+Prompts.swift`.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow?
     /// The window's content view, which holds the bar, the terminals and the card.
     var content: NSView?
@@ -34,15 +34,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var brewPID: pid_t?
     /// The answer a clipboard card waits for.
     var clipboardAnswer: ((Bool) -> Void)?
+    /// nmux quits itself, so the quit never asks.
+    var leaving = false
 
     var sessions: [Session] { mirror.sessions }
     var terminal: TerminalView? { mirror.activeSession?.view }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let (window, frame) = makeWindow()
+        window.delegate = self
         self.window = window
         content = window.contentView
-        let bar = SessionBar(keepAwake: keepAwake, show: { self.show($0) }, draft: { self.drafted($0) })
+        let bar = SessionBar(keepAwake: keepAwake, show: { self.show($0) }, close: { self.close($0) },
+                             draft: { self.drafted($0) }, answer: { self.answer($0) })
         content?.addSubview(bar)
         self.bar = bar
         mirror.delegate = self
@@ -145,8 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             vtSelfTest?.follow(session.view)
 #endif
         }
-        // An open field or card keeps the focus, so a Session made elsewhere drops nothing typed.
-        if card == nil, draft == nil { window?.makeFirstResponder(session.view) }
+        // An open field or prompt keeps the focus, so a Session made elsewhere drops nothing typed.
+        if card == nil, draft == nil, mirror.asking == nil { window?.makeFirstResponder(session.view) }
         // The title names the Session for Mission Control, the Window menu and the Dock's menu; tmux's titles never
         // reach it.
         window?.title = "nmux: \(session.info.name)"
@@ -183,6 +187,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if case .submit(let name) = event, draft != nil { mirror.create(name) { self.drafted(.answer($0)) } }
     }
 
+    /// Cmd+W on the shown Session, or a click on a pill's close mark: that pill asks whether to kill the Session, and
+    /// the bar takes the keys. The Session is not shown, and a close while any prompt is open does nothing.
+    func close(_ id: SessionID) {
+        guard mirror.asking == nil, card == nil, let session = mirror.session(id) else { return }
+        drafted(.cancel)
+        session.asking = true
+        selfTestLog("ask session \(id)")
+        updateBar()
+        window?.makeFirstResponder(bar)
+    }
+
+    /// The prompt ends before anything else happens: a kill goes on, a cancel hands the keys back to the terminal.
+    func answer(_ kill: Bool) {
+        guard let session = mirror.asking else { return }
+        session.asking = false
+        selfTestLog("answer \(kill ? "kill" : "cancel")")
+        window?.makeFirstResponder(terminal)
+        if kill { mirror.kill(session) } else { updateBar() }
+    }
+
     /// A BEL in a Session: one that is not shown takes the Bell mark, and while nmux is behind another app the Dock
     /// icon bounces once, until nmux was active again. nmux plays no sound and flashes nothing.
     func rang(_ session: Session) {
@@ -209,8 +233,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         show(sessions[sessionIndex(move, active: i, count: sessions.count)].info.id)
     }
 
-    /// nmux's own quit.
-    func quit() { NSApp.terminate(nil) }
+    /// Cmd+Shift+W, Cmd+Q, the close button and the Dock's Quit ask on the closing card, the box unticked, its default
+    /// Close; a close while any prompt is open does nothing, and one over a card that asks nothing quits at once.
+    func closeNmux() {
+        guard !leaving, mirror.asking == nil else { return }
+        if cardOnlyReports { return quit() }
+        guard card == nil else { return }
+        drafted(.cancel)
+        showCard(closingCard)
+        selfTestLog("ask closing")
+    }
+
+    /// The closing card's answer. Unticked, nmux quits and touches no Session; ticked, it kills every Session it
+    /// mirrors in their order and quits on the last answer, or as the control client ends with a server that ended
+    /// first.
+    func closeAnswered(all: Bool) {
+        selfTestLog("answer close" + (all ? " all" : ""))
+        answered(false)
+        guard all, mirror.killAll(then: { self.quit() }) else { return quit() }
+        leaving = true
+    }
+
+    /// nmux's own quit, which never asks.
+    func quit() {
+        leaving = true
+        NSApp.terminate(nil)
+    }
+
+    /// The close button opens the card instead of closing the window.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        closeNmux()
+        return false
+    }
+
+    /// A quit asks unless nmux quits itself or macOS shuts down, restarts or logs out, read from the quit Apple event's
+    /// reason as Ghostty does; the Dock's Quit opens the card and goes no further.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let reason = NSAppleEventManager.shared()
+            .currentAppleEvent?.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.typeCodeValue
+        guard quitAsks(own: leaving, reason: reason), !cardOnlyReports else { return .terminateNow }
+        closeNmux()
+        return .terminateCancel
+    }
 
     @objc func menuPicked(_ item: NSMenuItem) {
         if let action = item.representedObject as? AppAction { perform(action) }
@@ -219,6 +283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// An app shortcut, from the menu or the view.
     func perform(_ action: AppAction) {
         selfTestLog("shortcut \(action.name)")
+        // A pill that asks, or the closing card, takes every key, its own shortcut among them.
+        if mirror.asking != nil || closingCardShows { return }
         // A card's keys wait for it, and the menu's Paste and Clear reach the terminal past its focus, and New
         // Session's field would take the focus from it.
         if card != nil, [.paste, .clear, .newSession].contains(action) { return }
@@ -230,12 +296,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         switch action {
-        case .quit: quit()
+        case .quit, .closeNmux: closeNmux()
         case .clear: clear()
         case .copy: terminal?.copySelection()
         case .paste: paste()
         case .selectAll: terminal?.selectAll()
         case .newSession: drafted(.open)
+        case .closeSession: if let active = mirror.active { close(active) }
         case .session(let n): move(.number(n))
         case .lastSession: move(.last)
         case .previousSession: move(.previous)
@@ -278,6 +345,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: SessionMirrorDelegate {
+    func cancelAsking() { answer(false) }
+
     /// tmux 3.7c sends styled underlines and their colour only to a terminal whose XTVERSION it knows, and it knows
     /// neither libghostty nor Ghostty; WezTerm's set is the narrowest with them. Only the tmux client sees the reply,
     /// since tmux answers its panes' XTVERSION itself.
@@ -322,7 +391,7 @@ extension AppDelegate: SessionMirrorDelegate {
 #if NMUX_SELFTEST
         if let vtSelfTest { vtSelfTest.add(view) } else if let bar {
             vtSelfTest = VTSelfTest(view, bar: bar, create: { self.mirror.create($0) }, perform: { self.perform($0) },
-                                     rescale: { self.rescale($0) }, appearance: { dark in
+                                     rescale: { self.rescale($0) }, card: { self.card }, appearance: { dark in
                                          self.appearance.loadTheme(dark: dark)
                                          self.appearance.apply()
                                      })

@@ -85,6 +85,15 @@
 #   washback            draws the window's layers as they show now and logs `washback plain` when the bar's right
 #                       end shows the theme's background, `washback tinted` when it lies nearer the accent than that,
 #                       else `washback <hex>`.
+#   washback pill <n>   reads the n-th pill 8 pt from its left edge the same way, against the danger colour.
+#   washback card       reads the window inside the card's default button, against the accent; with no card, where
+#                       the last card's button was.
+#   close <n>           clicks the n-th pill's close mark, as `pill` clicks.
+#   bin <$id>           clicks the bin on that Session's pill, as `pill` clicks. Every such click answers an asking pill
+#                       first, as a click in the window does.
+#   close button        presses the window's close button, as Closing nmux does.
+#   box                 clicks the end of the card's checkbox label through the window's hit test, and logs
+#                       `box missed` when the click lands elsewhere.
 
 APP=${APP:-build/selftest/nmux.app}
 BIN=$APP/Contents/MacOS/nmux

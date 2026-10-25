@@ -6,6 +6,7 @@ import Testing
 // The Sessions: the move index, the shown Session after a diff, the reattach rule and `create`'s answer.
 private let ids = (0...3).map { SessionID(number: $0) }
 private let changed = clientSessionChanged("%client-session-changed /dev/ttys004 $2 my api")
+private let ticked = { var card = closingCard; card.checked = true; return card }()
 
 struct SessionRulesTests {
     @Test("a number goes to its Session") func aNumberGoesToItsSession() {
@@ -58,20 +59,24 @@ struct SessionRulesTests {
         #expect(activeIndex(old: ids, new: [], active: ids[0]) == nil)
     }
 
+    @Test("a Session being killed never attaches again") func aSessionBeingKilledNeverAttachesAgain() {
+        #expect(clientEnd(exited: true, waiting: false, killing: true, ranFor: 5) == .none)
+    }
+
     @Test("a client that ends within a second waits for a key") func aClientThatEndsWithinASecondWaits() {
-        #expect(clientEnd(exited: true, waiting: false, ranFor: 0.3) == .wait)
+        #expect(clientEnd(exited: true, waiting: false, killing: false, ranFor: 0.3) == .wait)
     }
 
     @Test("a client that ended later attaches again") func aClientThatEndedLaterAttachesAgain() {
-        #expect(clientEnd(exited: true, waiting: false, ranFor: 5) == .attach)
+        #expect(clientEnd(exited: true, waiting: false, killing: false, ranFor: 5) == .attach)
     }
 
     @Test("a client that waits for a key already stays waiting") func aClientThatWaitsForAKeyAlreadyStays() {
-        #expect(clientEnd(exited: true, waiting: true, ranFor: 5) == .none)
+        #expect(clientEnd(exited: true, waiting: true, killing: false, ranFor: 5) == .none)
     }
 
     @Test("a running client is left alone") func aRunningClientIsLeftAlone() {
-        #expect(clientEnd(exited: false, waiting: false, ranFor: 5) == .none)
+        #expect(clientEnd(exited: false, waiting: false, killing: false, ranFor: 5) == .none)
     }
 
     @Test("an empty name leaves -s out") func anEmptyNameLeavesSOut() {
@@ -109,10 +114,56 @@ struct SessionRulesTests {
         #expect(clientSessionChanged("%client-session-changed x y") == nil)
     }
 
+    @Test("a move to the Session's own is ignored") func aMoveToTheSessionsOwnIsIgnored() {
+        #expect(!checksMove(own: ids[1], target: ids[1], killing: false))
+    }
+
+    @Test("a move to another Session checks the own one") func aMoveToAnotherSessionChecksTheOwnOne() {
+        #expect(checksMove(own: ids[1], target: ids[2], killing: false))
+    }
+
+    @Test("a Session being killed is left alone") func aSessionBeingKilledIsLeftAlone() {
+        #expect(!checksMove(own: ids[1], target: ids[2], killing: true))
+    }
+
+    @Test("the closing card's default reads Close unticked and Kill All ticked")
+    func theClosingCardsDefaultReadsCloseUntickedAnd() {
+        #expect(closingCard.defaultAction == .close)
+        #expect(closingCard.label(.close) == "Close")
+        #expect(ticked.label(.close) == "Kill All")
+    }
+
+    @Test("the default button lists both labels either way") func theDefaultButtonListsBothLabelsEitherWay() {
+        #expect(closingCard.labels(.close) == ["Close", "Kill All"])
+        #expect(ticked.labels(.close) == closingCard.labels(.close))
+    }
+
     @Test("a button is as wide as its wider label, padded, at least 80 pt") func aButtonIsAsWideAsItsWider() {
         #expect(buttonWidth(labels: [40.2, 61]) == 93)
         #expect(buttonWidth(labels: [61, 40.2]) == 93)
         #expect(buttonWidth(labels: [20]) == 80)
+    }
+
+    @Test("the closing card's box starts unticked, and Escape cancels")
+    func theClosingCardsBoxStartsUntickedAndEscape() {
+        #expect(!closingCard.checked)
+        #expect(closingCard.escape == .cancel)
+    }
+
+    @Test("the Dock's Quit asks, with no reason or another one") func theDocksQuitAsksWithNoReasonOr() {
+        #expect(quitAsks(own: false, reason: nil))
+        #expect(quitAsks(own: false, reason: 0x7175_6974))
+    }
+
+    // The Apple event's `why` codes: 'shut', 'rest' and 'rlgo'.
+    @Test("a shutdown, a restart and a logout never ask",
+          arguments: [0x7368_7574, 0x7265_7374, 0x726c_676f] as [UInt32])
+    func aShutdownARestartAndALogoutNeverAsk(reason: UInt32) {
+        #expect(!quitAsks(own: false, reason: reason))
+    }
+
+    @Test("nmux's own quits never ask") func nmuxsOwnQuitsNeverAsk() {
+        #expect(!quitAsks(own: true, reason: nil))
     }
 
     @Test("a bell in a hidden Session marks it") func aBellInAHiddenSessionMarksIt() {

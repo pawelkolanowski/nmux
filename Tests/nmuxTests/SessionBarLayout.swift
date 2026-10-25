@@ -3,12 +3,14 @@ import Testing
 @testable import nmux
 @testable import Terminal
 
-// The Session bar: the separator rule, the name cut, the fade sides and the cup.
+// The Session bar: the separator rule, the name cut, the accent and danger picks, the bin, the fade sides and the left
+// slot.
 // Widths in columns: a wide character takes two.
 private func columns(_ s: String) -> Int {
     s.reduce(0) { $0 + (($1.unicodeScalars.first?.value ?? 0) >= 0x1100 && $1 != "…" ? 2 : 1) }
 }
 private func fitsTen(_ s: String) -> Bool { columns(s) <= 10 }
+private let bin = binRect(CGRect(x: 0, y: 0, width: 136, height: 30))
 
 struct SessionBarLayoutTests {
     @Test("a separator stands between two inactive pills") func aSeparatorStandsBetweenTwoInactivePills() {
@@ -48,6 +50,17 @@ struct SessionBarLayoutTests {
         #expect({ let c = cutName("中文中文中文中文", fits: fitsTen); return c == "中文…中文" && fitsTen(c) }())
     }
 
+    @Test("the bin is 30 pt wide, 7 pt from top and bottom, 6 pt from the pill's right end")
+    func theBinIs30PtWide7Pt() {
+        #expect(bin == CGRect(x: 100, y: 7, width: 30, height: 16))
+    }
+
+    @Test("a click inside the bin hits it, one beside it does not") func aClickInsideTheBinHitsItOne() {
+        #expect(bin.contains(CGPoint(x: 101, y: 8)))
+        #expect(!bin.contains(CGPoint(x: 99, y: 15)))
+        #expect(!bin.contains(CGPoint(x: 131, y: 15)))
+    }
+
     @Test("a row that fits fades nowhere") func aRowThatFitsFadesNowhere() {
         #expect(Fades(content: 300, visible: 400, offset: 0) == .none)
     }
@@ -62,6 +75,26 @@ struct SessionBarLayoutTests {
 
     @Test("a row at its end fades left") func aRowAtItsEndFadesLeft() {
         #expect(Fades(content: 1000, visible: 400, offset: 600) == .left)
+    }
+
+    @Test("the active pill shows the close mark") func theActivePillShowsTheCloseMark() {
+        #expect(leftSlot(active: true, hovered: false, bell: false) == .close)
+    }
+
+    @Test("a hovered pill shows the close mark") func aHoveredPillShowsTheCloseMark() {
+        #expect(leftSlot(active: false, hovered: true, bell: false) == .close)
+    }
+
+    @Test("a hidden pill with the Bell mark shows the dot") func aHiddenPillWithTheBellMarkShows() {
+        #expect(leftSlot(active: false, hovered: false, bell: true) == .dot)
+    }
+
+    @Test("hover shows the close mark in the dot's place") func hoverShowsTheCloseMarkInTheDots() {
+        #expect(leftSlot(active: false, hovered: true, bell: true) == .close)
+    }
+
+    @Test("a quiet hidden pill shows nothing") func aQuietHiddenPillShowsNothing() {
+        #expect(leftSlot(active: false, hovered: false, bell: false) == .nothing)
     }
 
     @Test("the cup off shows a moon and Sleep allowed, its tip offering to keep the Mac awake")

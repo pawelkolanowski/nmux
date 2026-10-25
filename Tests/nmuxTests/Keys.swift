@@ -22,6 +22,11 @@ struct KeyTests {
         #expect(shortcut("t", .command)?.action == .newSession)
     }
 
+    @Test("Cmd+Shift+W closes nmux and Cmd+W the Session") func cmdShiftWClosesNmuxAndCmdWTheSession() {
+        #expect(shortcut("w", [.command, .shift])?.action == .closeNmux)
+        #expect(shortcut("w", .command)?.action == .closeSession)
+    }
+
     @Test("Cmd+Shift+[ and ] go to the previous and next Session") func cmdShiftAndGoToThePreviousAnd() {
         #expect(shortcut("[", [.command, .shift])?.action == .previousSession)
         #expect(shortcut("]", [.command, .shift])?.action == .nextSession)
@@ -55,8 +60,8 @@ struct KeyTests {
 
     @Test("the shortcut names are the self-test's") func theShortcutNamesAreTheSelfTests() {
         #expect(shortcuts.map(\.action.name).joined(separator: " ") == "quit copy paste select-all clear new-session "
-            + "previous-session next-session session-1 session-2 session-3 session-4 session-5 session-6 "
-            + "session-7 session-8 last-session")
+            + "close-session close-nmux previous-session next-session session-1 session-2 session-3 session-4 "
+            + "session-5 session-6 session-7 session-8 last-session")
     }
 
     @Test("Cmd+Left, Cmd+Right and Cmd+Backspace send Ctrl+A, Ctrl+E and Ctrl+U")

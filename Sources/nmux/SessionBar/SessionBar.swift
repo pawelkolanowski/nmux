@@ -10,8 +10,11 @@ final class SessionBar: NSView {
     /// Every pill's width.
     let pillWidth: CGFloat = 136
     let show: (SessionID) -> Void
+    let close: (SessionID) -> Void
     /// The New Session field's events go to the draft's owner, which hands the draft back through `update`.
     let draft: (DraftEvent) -> Void
+    /// The answer to an asking pill: true kills its Session, false cancels.
+    let answer: (Bool) -> Void
     private(set) var pills: [Pill] = []
     private(set) lazy var plus = PlusSlot(bar: self)
     /// One field for the bar's life, moved by each update and never removed while a draft is open, so it keeps its text
@@ -29,8 +32,9 @@ final class SessionBar: NSView {
     private var fades: Fades?
     private var lightObservers: [NSObjectProtocol] = []
 
-    init(keepAwake: KeepAwake, show: @escaping (SessionID) -> Void, draft: @escaping (DraftEvent) -> Void) {
-        (self.show, self.draft) = (show, draft)
+    init(keepAwake: KeepAwake, show: @escaping (SessionID) -> Void, close: @escaping (SessionID) -> Void,
+         draft: @escaping (DraftEvent) -> Void, answer: @escaping (Bool) -> Void) {
+        (self.show, self.close, self.draft, self.answer) = (show, close, draft, answer)
         cup = CupSlot(keepAwake)
         super.init(frame: .zero)
         wantsLayer = true
@@ -52,6 +56,16 @@ final class SessionBar: NSView {
                 self?.scrolled()
             }
         }
+        // A click anywhere in the window answers an asking pill first, then lands as usual.
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown,
+                                                    .otherMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated {
+                if let self, event.window === self.window {
+                    self.clicked(at: event.locationInWindow, left: event.type == .leftMouseDown)
+                }
+            }
+            return event
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("SessionBar is never decoded") }
@@ -70,6 +84,30 @@ final class SessionBar: NSView {
 
     /// A click on the bar outside the field, which takes no focus from it.
     func dropField() { if drafting { draft(.cancel) } }
+
+    private var asking: Pill? { pills.first { $0.session.asking } }
+
+    /// A click at a point in the window: a right or middle one, or one outside the asking pill, cancels; the pill
+    /// answers a left click on itself.
+    func clicked(at point: NSPoint, left: Bool = true) {
+        // A view that does not clip reports the whole visible clip as its visible rect, so it is cut to the pill.
+        guard let asking,
+              !left || !asking.visibleRect.intersection(asking.bounds).contains(asking.convert(point, from: nil))
+        else { return }
+        answer(false)
+    }
+
+    /// While a pill asks the bar holds the focus: Return or Enter kills, Escape cancels, and every other key goes
+    /// nowhere.
+    override var acceptsFirstResponder: Bool { asking != nil }
+
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case KeyCode.return, KeyCode.enter: answer(true)
+        case KeyCode.escape: answer(false)
+        default: break
+        }
+    }
 
     /// AppKit lays the lights out again for its own 28 pt title bar on a resize and other changes; each change of a
     /// button's frame moves them back.
@@ -142,7 +180,8 @@ final class SessionBar: NSView {
                 mark.frame = target
             }
         }
-        mark.isHidden = at == nil
+        // An asking pill shows its prompt alone.
+        mark.isHidden = at.map { sessions[$0].asking } ?? true
         marked = active
         let clip = scroller.contentView
         clip.scroll(to: clip.constrainBoundsRect(NSRect(origin: offset, size: clip.bounds.size)).origin)
