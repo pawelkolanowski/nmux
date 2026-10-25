@@ -61,6 +61,9 @@ public struct Cell: Equatable, Sendable {
     let faceWidth: Double
     let faceHeight: Double
     let faceY: Double
+    /// The height a Nerd Font icon is sized to over two cells and in one, font_patcher's.
+    let iconHeight: Double
+    let iconHeightSingle: Double
 }
 
 /// Rounded, never ceiled, so the cell stays within half a pixel of the design.
@@ -82,7 +85,9 @@ func cellMetrics(_ face: FaceMetrics) -> Cell {
         cursorThickness: 1,
         faceWidth: max(1, faceWidth),
         faceHeight: max(1, faceHeight),
-        faceY: baseline - faceBaseline)
+        faceY: baseline - faceBaseline,
+        iconHeight: max(1, faceHeight),
+        iconHeightSingle: (2 * face.estimatedCapHeight + max(1, faceHeight)) / 3)
 }
 
 /// The factor a fallback face's size takes to match the primary: the ratio of ex heights, else cap heights,
@@ -97,6 +102,11 @@ func fallbackScale(primary: FaceMetrics, face: FaceMetrics) -> Double {
         if let p = positive(p), let f = positive(f) { return (p / primary.pxPerEm) / (f / face.pxPerEm) }
     }
     return 1
+}
+
+/// A glyph's box in pixels, from the cell's left edge and bottom.
+struct GlyphBox: Equatable {
+    var x, y, width, height: Double
 }
 
 /// As many whole cells as the pixels hold, at least 1 × 1.

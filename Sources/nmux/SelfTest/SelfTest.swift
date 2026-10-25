@@ -9,6 +9,8 @@ nonisolated enum SelfTest {
     static func log(_ event: String) { FileHandle.standardError.write(Data("selftest: \(event)\n".utf8)) }
     /// The card action pressed on every card that offers it, a moment after it shows.
     static let press = variable("PRESS")
+    /// A face file in the app's Resources/Fonts to draw in, in place of SF Mono.
+    static let font = variable("FONT")
     /// Hides tmux's known paths, so the seam's login shell decides alone.
     static let noKnownPaths = variable("NO_KNOWN_PATHS") != nil
     /// The cells logged on each settled frame, and where the screen's text goes.

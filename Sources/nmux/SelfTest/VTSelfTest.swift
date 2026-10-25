@@ -91,10 +91,15 @@ final class VTSelfTest: TerminalViewObserver {
             for (x, y) in self.named {
                 if let cell = self.view.describeCell(x, y) { selfTestLog("cell \(x),\(y) \(cell)") }
             }
+            selfTestLog("shaped \(self.view.rowsShaped)")
             selfTestLog("cursor \(self.view.describeCursor())")
             guard !self.readBack, let ink = self.named.first, self.view.hasGlyph(ink.x, ink.y) else { return }
             self.readBack = true
-            self.view.readBack(ink: ink.x, ink.y) { selfTestLog("readback \($0)") }
+            // An underlined named cell is checked against the first plain one with a glyph.
+            let underlined = self.named.first { self.view.isUnderlined($0.x, $0.y) }
+            let plain = self.named.first { self.view.hasGlyph($0.x, $0.y) && !self.view.isDecorated($0.x, $0.y) }
+            let pair = underlined.flatMap { u in plain.map { (u, $0) } }
+            self.view.readBack(ink: ink.x, ink.y, underline: pair) { selfTestLog("readback \($0)") }
         }
     }
 

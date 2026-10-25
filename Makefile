@@ -8,7 +8,7 @@ LOCK := vendor/libghostty-vt.lock
 # The zip unpacked, once it passed its lock.
 VT   := build/ghostty-vt.xcframework/macos-arm64_x86_64
 
-.PHONY: all run install test seam clean
+.PHONY: all run install test seam references bench clean
 
 all: $(APP)
 
@@ -28,6 +28,14 @@ test: $(APP) $(SELFTEST)
 # `make seam RUN="2 3"` runs only those runs; `make seam` runs them all.
 seam: $(SELFTEST)
 	Tests/seam/run.sh $(RUN)
+
+# Draws the twelve reference sheets into build/references for the author to look at; it checks nothing.
+references: $(VT)/libghostty-vt.a
+	NMUX_REFERENCES=1 swift test --filter drawTheTwelveReferenceSheets
+
+# Prints the allocations and the time of one full-screen rebuild of the rows, in a release build; it checks nothing.
+bench: $(VT)/libghostty-vt.a
+	NMUX_BENCH=1 swift test -c release -Xswiftc -enable-testing --build-path .build/bench --filter rebuildAFullScreenOfRows
 
 clean:
 	rm -rf build .build
@@ -66,12 +74,16 @@ build/logo.icns: assets/logo.svg
 	done
 	iconutil -c icns -o $@ build/logo.iconset
 
-$(APP): build/nmux build/nmux.metallib build/logo.icns Resources/Info.plist LICENSE NOTICE vendor/LICENSE-ghostty
+$(APP): build/nmux build/nmux.metallib build/logo.icns Resources/Info.plist LICENSE NOTICE vendor/LICENSE-ghostty \
+		$(wildcard Resources/Fonts/*)
 	rm -rf $@
-	mkdir -p $@/Contents/MacOS $@/Contents/Resources/Licenses
+	mkdir -p $@/Contents/MacOS $@/Contents/Resources/Licenses $@/Contents/Resources/Fonts
+	cp Resources/Fonts/*.ttf $@/Contents/Resources/Fonts/
+	cp Resources/Fonts/MapleMono-OFL.txt $@/Contents/Resources/Licenses/maple-mono-OFL
 	cp build/nmux $@/Contents/MacOS/
 	cp Resources/Info.plist $@/Contents/
 	cp build/logo.icns build/nmux.metallib $@/Contents/Resources/
 	cp LICENSE $@/Contents/Resources/Licenses/nmux-LICENSE
 	cp NOTICE $@/Contents/Resources/Licenses/NOTICE
 	cp vendor/LICENSE-ghostty $@/Contents/Resources/Licenses/ghostty-LICENSE
+	cp Resources/Fonts/SymbolsNerdFont-LICENSE.txt $@/Contents/Resources/Licenses/symbols-nerd-font-LICENSE

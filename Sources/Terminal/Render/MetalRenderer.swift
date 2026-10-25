@@ -75,7 +75,9 @@ final class MetalRenderer {
     private let residency: MTLResidencySet
     private let bgPipeline, cellBgPipeline, textPipeline: MTLRenderPipelineState
     private var slots: [Slot] = []
+    /// The alpha atlas and the colour one.
     private var atlasTexture: MTLTexture?
+    private var colorAtlasTexture: MTLTexture?
     /// Textures and buffers replaced by larger ones, each kept until the last frame that read it completed.
     private var retired: [(resource: MTLAllocation, lastFrame: UInt64)] = []
 
@@ -157,14 +159,15 @@ final class MetalRenderer {
         cells.writeText(slot.text.contents().bindMemory(to: CellText.self, capacity: max(count, 1)))
         let size = layer.drawableSize
         let cell = cells.font.cell
-        // Text under a block cursor takes the background's colour; no other cursor covers its text.
+        // Text under a block cursor takes the theme's cursor-text, else the background's colour; no other cursor covers
+        // its text.
         let block = cells.cursorShape == .block ? cells.cursorCell.map { SIMD2(UInt16($0.x), UInt16($0.y)) } : nil
         var uniforms = Uniforms(projection: ortho(width: Float(size.width), height: Float(size.height)),
                                 screenSize: [Float(size.width), Float(size.height)],
                                 cellSize: [Float(cell.width), Float(cell.height)],
                                 gridSize: [UInt16(cells.cols), UInt16(cells.rows)],
                                 cursorPos: block ?? SIMD2(repeating: .max),
-                                cursorColor: cells.background,
+                                cursorColor: cells.cursorText ?? cells.background,
                                 bgColor: cells.background, cursorWide: block != nil && cells.cursorWide)
         slot.uniforms.contents().copyMemory(from: &uniforms, byteCount: MemoryLayout<Uniforms>.size)
 
@@ -187,6 +190,7 @@ final class MetalRenderer {
         table.setAddress(slot.uniforms.gpuAddress, index: 1)
         table.setAddress(slot.bg.gpuAddress, index: 2)
         table.setTexture(atlasTexture!.gpuResourceID, index: 0)
+        table.setTexture(colorAtlasTexture!.gpuResourceID, index: 1)
         enc.setArgumentTable(table, stages: [.vertex, .fragment])
         enc.setRenderPipelineState(bgPipeline)
         enc.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
@@ -223,11 +227,12 @@ final class MetalRenderer {
         return true
     }
 
-    /// Replaces the atlas texture by the next frame's: a new scale starts an empty atlas. The old texture lives until
-    /// the frames that read it completed.
+    /// Replaces the atlas textures by the next frame's: a new scale starts empty atlases. The old textures live until
+    /// the frames that read them completed.
     func dropAtlas() {
         retire(atlasTexture)
-        atlasTexture = nil
+        retire(colorAtlasTexture)
+        (atlasTexture, colorAtlasTexture) = (nil, nil)
     }
 
     private func retire(_ texture: MTLTexture?) {
@@ -271,17 +276,18 @@ final class MetalRenderer {
     }
 #endif
 
-    /// Uploads what the atlas gained since the last frame. A grown atlas gets a new texture, and the old one lives
-    /// until the frames that read it completed. Frames in flight read only places already filled, so the partial
-    /// upload never races them.
+    /// Uploads what each atlas gained since the last frame, the colour one as `bgra8Unorm_srgb` as Ghostty's. A grown
+    /// atlas gets a new texture, and the old one lives until the frames that read it completed. Frames in flight read
+    /// only places already filled, so the partial upload never races them.
     private func syncAtlas(_ cells: Cells) {
-        sync(cells.atlas, &atlasTexture)
+        sync(cells.atlas, &atlasTexture, .r8Unorm)
+        sync(cells.colorAtlas, &colorAtlasTexture, .bgra8Unorm_srgb)
         cells.atlasUploaded()
     }
 
-    private func sync(_ atlas: Atlas, _ current: inout MTLTexture?) {
+    private func sync(_ atlas: Atlas, _ current: inout MTLTexture?, _ format: MTLPixelFormat) {
         if current == nil || atlas.grew {
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: atlas.size,
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: atlas.size,
                                                                       height: atlas.size, mipmapped: false)
             descriptor.storageMode = .shared
             descriptor.usage = .shaderRead
@@ -297,9 +303,10 @@ final class MetalRenderer {
     }
 
     private func upload(_ atlas: Atlas, _ texture: MTLTexture, _ r: (x: Int, y: Int, maxX: Int, maxY: Int)) {
+        let line = atlas.size * atlas.depth
         atlas.pixels.withUnsafeBytes { pixels in
             texture.replace(region: MTLRegionMake2D(r.x, r.y, r.maxX - r.x, r.maxY - r.y), mipmapLevel: 0,
-                            withBytes: pixels.baseAddress! + r.y * atlas.size + r.x, bytesPerRow: atlas.size)
+                            withBytes: pixels.baseAddress! + r.y * line + r.x * atlas.depth, bytesPerRow: line)
         }
     }
 

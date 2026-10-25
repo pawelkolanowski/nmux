@@ -12,7 +12,7 @@ private func oneTerminal() throws -> AppDelegate {
     try #require(FileManager.default.fileExists(atPath: metallib.path),
                  "build/nmux.metallib is missing: run make first")
     app.metallib = metallib
-    let font = Font(sfMono(14), points: 14, scale: 2)
+    let font = Font(sfMono(14), points: 14, scale: 2, thicken: false)
     (app.font, app.fonts) = (font, [2: font])
     app.terminal = try TerminalView(argv: ["/bin/cat"], grid: Grid(cols: 80, rows: 24),
                                     context: app.sharedContext(), font: font)

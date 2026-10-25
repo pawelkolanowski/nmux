@@ -14,12 +14,13 @@
 #   NMUX_SELFTEST_SCREEN=<file>    each time output settles for 0.4 s, the screen's text is written to the file.
 #   NMUX_SELFTEST_CELLS="x,y ..."  the cells, apart by spaces, logged each time the frames settle for 0.4 s.
 #   NMUX_SELFTEST_PRESS=<action>   pressed on every card that offers it, a moment after the card shows.
+#   NMUX_SELFTEST_FONT=<file>      a face file in the app's Resources/Fonts to draw in, in place of SF Mono.
 #   NMUX_SELFTEST_NO_KNOWN_PATHS   hides the known paths of tmux, so the login shell alone decides.
 #
 # On its own, the self-test:
 #   - logs the bytes parsed each time output settles for 0.4 s; the first time, it probes the terminal.
 #   - asks every 0.1 s whether a hold still stands.
-#   - logs the named cells and the cursor each time the frames settle for 0.4 s.
+#   - logs the named cells, the rows the last rebuild shaped and the cursor each time the frames settle for 0.4 s.
 #   - reads one frame back the first time the first named cell holds a glyph.
 #
 # Signals:

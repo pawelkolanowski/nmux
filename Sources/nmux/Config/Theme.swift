@@ -5,6 +5,8 @@ import Terminal
 /// the cards draw with, for the appearance it was resolved for.
 nonisolated struct Theme: Equatable, Sendable {
     var background, foreground, cursorColor: RGB
+    /// Nil where the text under a block cursor takes the background in force, which a program may change.
+    var cursorText: RGB?
     var palette: [RGB]
     var accent: RGB
     var dark: Bool
@@ -19,6 +21,6 @@ nonisolated struct Theme: Equatable, Sendable {
 
     var terminal: TerminalColors {
         TerminalColors(foreground: foreground, background: background, cursor: cursorColor, palette: palette,
-                       dark: dark)
+                       cursorText: cursorText, dark: dark)
     }
 }

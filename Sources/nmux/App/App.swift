@@ -28,6 +28,11 @@ enum App {
 
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        // The bundled faces: Symbols Nerd Font, which every Font finds by name, and Maple Mono, which the self-test
+        // draws in.
+        for url in Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "Fonts") ?? [] {
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
         let delegate = AppDelegate()
         app.delegate = delegate
         app.mainMenu = makeMainMenu(target: delegate)

@@ -8,15 +8,37 @@ extension TerminalView {
     /// Frames presented so far.
     public var frames: UInt64 { renderer.frames }
 
-    /// `face=<family> glyph=<id> fg=<rrggbb> bg=<rrggbb>` for the cell at x, y as last built; the face reads `none`
-    /// for a cell with no text.
+    /// `face=<family> glyph=<id> glyphs=<n> atlas=<text|color> fg=<rrggbb> bg=<rrggbb> style=<style> synthetic=<yes|no>
+    /// deco=<list> span=<1|2> cluster=<hex,…>` for the cell at x, y as last built. The face is its run's, `none` for a
+    /// cell with no text, `sprite` with the glyph `U+<hex>` for a codepoint nmux draws itself; the glyph is the first
+    /// with an outline shaped onto the cell, 0 when none, `glyphs` counts them, and `atlas` names that glyph's atlas,
+    /// `text` when none; `span` counts the cells that glyph was placed over. A faint foreground adds its alpha,
+    /// `rrggbbaa`; the list names each decoration with its colour, `underline-curly:#ff0000,strike:#000000`, or reads
+    /// `none`; the cluster reads `none` for a cell with no text.
     public func describeCell(_ x: Int, _ y: Int) -> String? {
         cells.drawn(x, y).map { d in
-            "face=\(d.face.map(family) ?? "none") glyph=\(d.glyph) fg=\(hex(d.fg)) bg=\(hex(d.bg))"
+            let deco = d.decorations.isEmpty ? "none" : d.decorations.map { "\($0.kind.rawValue):#\(hex($0.color))" }
+                .joined(separator: ",")
+            let cluster = d.cluster.isEmpty ? "none" : d.cluster.map { String($0, radix: 16) }.joined(separator: ",")
+            let face = d.sprite ? "sprite" : d.face.map(family) ?? "none"
+            let glyph = d.sprite ? String(format: "U+%04X", d.glyph) : "\(d.glyph)"
+            return "face=\(face) glyph=\(glyph) glyphs=\(d.glyphCount) atlas=\(d.atlas) "
+                + "fg=\(hex(d.fg))\(d.fg.w == 255 ? "" : String(format: "%02x", d.fg.w)) "
+                + "bg=\(hex(d.bg)) style=\(d.style.rawValue) synthetic=\(d.synthetic ? "yes" : "no") deco=\(deco) "
+                + "span=\(d.span) cluster=\(cluster)"
         }
     }
 
+    /// The rows the last update that rebuilt any row had to shape.
+    public var rowsShaped: Int { cells.shaped }
+
     public func hasGlyph(_ x: Int, _ y: Int) -> Bool { cells.drawn(x, y)?.face != nil }
+
+    public func isUnderlined(_ x: Int, _ y: Int) -> Bool {
+        cells.drawn(x, y)?.decorations.contains { $0.kind.isUnderline } ?? false
+    }
+
+    public func isDecorated(_ x: Int, _ y: Int) -> Bool { cells.drawn(x, y)?.decorations.isEmpty == false }
 
     /// `<x>,<y> <shape> <rrggbb>`, or `none` when no cursor is drawn.
     public func describeCursor() -> String {
@@ -28,9 +50,21 @@ extension TerminalView {
     public func keepFramesReadable() { renderer.layer.framebufferOnly = false }
 
     /// Draws one frame, reads its pixels back and hands `done` the verdict `bg <ok|bad> ink <x>,<y> <ok|bad> cursor
-    /// <ok|bad>`.
-    public func readBack(ink x: Int, _ y: Int, _ done: @escaping (String) -> Void) {
-        renderer.readback = { [cells] frame in done(cells.verdict(frame, ink: x, y)) }
+    /// <ok|bad>`, then ` color <ok|bad>` when the ink cell's glyph is a colour one, then ` underline <x>,<y> <ok|bad>
+    /// plain <x>,<y> <ok|bad>` when given an underlined and a plain cell.
+    public func readBack(ink x: Int, _ y: Int,
+                         underline: (underlined: (x: Int, y: Int), plain: (x: Int, y: Int))? = nil,
+                         _ done: @escaping (String) -> Void) {
+        renderer.readback = { [cells] frame in
+            var verdict = cells.verdict(frame, ink: x, y)
+            if let (underlined, plain) = underline {
+                func ok(_ pass: Bool) -> String { pass ? "ok" : "bad" }
+                verdict += " underline \(underlined.x),\(underlined.y)"
+                    + " \(ok(cells.underlineInk(frame, underlined.x, underlined.y)))"
+                    + " plain \(plain.x),\(plain.y) \(ok(!cells.underlineInk(frame, plain.x, plain.y)))"
+            }
+            done(verdict)
+        }
         redraw = true
         resume()
     }
@@ -63,7 +97,8 @@ extension Cells {
     }
 
     /// `bg` is a pixel outside every glyph, in the terminal's background; `ink` any pixel of the cell at x, y that
-    /// differs from the cell's background; `cursor` the cursor cell's centre in the cursor's colour.
+    /// differs from the cell's background; `cursor` the cursor cell's centre in the cursor's colour; `color`, for a
+    /// colour glyph, any pixel of its cells that no blend of the foreground and the background gives.
     func verdict(_ frame: Readback, ink x: Int, _ y: Int) -> String {
         let cell = font.cell
         func centre(_ cx: Int, _ cy: Int) -> SIMD4<UInt8>? {
@@ -79,7 +114,38 @@ extension Cells {
             }
         } ?? false
         let cursor = cursorCell.map { centre($0.x, $0.y) == cursorColor } ?? false
-        return "bg \(ok(background)) ink \(x),\(y) \(ok(ink)) cursor \(ok(cursor))"
+        var verdict = "bg \(ok(background)) ink \(x),\(y) \(ok(ink)) cursor \(ok(cursor))"
+        if let d = drawn(x, y), d.atlas == .color {
+            let colored = (0..<cell.height).contains { py in
+                (0..<cell.width * (d.wide ? 2 : 1)).contains { px in
+                    frame.bgra(x * cell.width + px, y * cell.height + py).map { offBlend($0, d.fg, d.bg) } ?? false
+                }
+            }
+            verdict += " color \(ok(colored))"
+        }
+        return verdict
+    }
+
+    /// Whether the pixel lies off the line from `bg` to `fg`, by more than a tenth of the channel's range: measured
+    /// along the channel where the two differ most.
+    private func offBlend(_ p: SIMD4<UInt8>, _ fg: SIMD4<UInt8>, _ bg: SIMD4<UInt8>) -> Bool {
+        func rgb(_ c: SIMD4<UInt8>) -> SIMD3<Double> { SIMD3(Double(c.x), Double(c.y), Double(c.z)) }
+        let span = rgb(fg) - rgb(bg), off = rgb(p) - rgb(bg)
+        let c = [0, 1, 2].max { abs(span[$0]) < abs(span[$1]) }!
+        let t = span[c] == 0 ? 0 : off[c] / span[c]
+        return [0, 1, 2].contains { abs(off[$0] - t * span[$0]) > 25.5 }
+    }
+
+    /// Whether any pixel of the underline's rows in the cell at x, y differs from the cell's background.
+    func underlineInk(_ frame: Readback, _ x: Int, _ y: Int) -> Bool {
+        let cell = font.cell
+        guard let d = drawn(x, y) else { return false }
+        let rows = cell.underlinePosition..<min(cell.underlinePosition + cell.underlineThickness, cell.height)
+        return rows.contains { py in
+            (0..<cell.width).contains { px in
+                frame.bgra(x * cell.width + px, y * cell.height + py).map { $0 != d.bg } ?? false
+            }
+        }
     }
 }
 

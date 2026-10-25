@@ -43,9 +43,12 @@ public final class VTHost: @unchecked Sendable {
     private let writer = DispatchQueue(label: "nmux.vthost.writer")
     private let queueLock = NSLock()
     private var queued = 0
+    /// The XTVERSION reply, alive as long as the host; an empty one leaves libghostty-vt's own, `libghostty`.
+    private let xtversion: UnsafeMutableBufferPointer<UInt8>
 
-    /// Starts `argv` on a new pty of `grid` cells of `cell`, with TMUX unset, as the pty's controlling terminal.
-    init(argv: [String], grid: Grid, cell: Cell, handlers: Handlers) throws(VTHostError) {
+    /// Starts `argv` on a new pty of `grid` cells of `cell`, with TMUX unset, as the pty's controlling terminal;
+    /// `xtversion` is the terminal's answer to XTVERSION.
+    init(argv: [String], grid: Grid, cell: Cell, handlers: Handlers, xtversion: String = "") throws(VTHostError) {
         self.handlers = handlers
         size = GhosttySizeReportSize(rows: UInt16(grid.rows), columns: UInt16(grid.cols),
                                      cell_width: UInt32(cell.width), cell_height: UInt32(cell.height))
@@ -59,6 +62,8 @@ public final class VTHost: @unchecked Sendable {
             ghostty_terminal_free(made)
             throw error
         }
+        self.xtversion = .allocate(capacity: xtversion.utf8.count)
+        _ = self.xtversion.initialize(from: xtversion.utf8)
         terminal = made
         ghostty_terminal_resize(terminal, size.columns, size.rows, size.cell_width, size.cell_height)
         configure()
@@ -68,6 +73,7 @@ public final class VTHost: @unchecked Sendable {
     deinit {
         if fd >= 0 { close(fd) }
         ghostty_terminal_free(terminal)
+        xtversion.deallocate()
     }
 
     /// Starts reading the client's output.
@@ -106,6 +112,11 @@ public final class VTHost: @unchecked Sendable {
             h.handlers.hold(held)
 #endif
         }
+        let version: GhosttyTerminalXtversionFn = { _, ud in
+            let v = host(ud).xtversion
+            return GhosttyString(ptr: v.baseAddress, len: v.count)
+        }
+        set(GHOSTTY_TERMINAL_OPT_XTVERSION, unsafeBitCast(version, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_WRITE_PTY, unsafeBitCast(writePty, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_SIZE, unsafeBitCast(size, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))

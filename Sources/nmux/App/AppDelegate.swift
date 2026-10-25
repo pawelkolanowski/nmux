@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A Latin letter, an ideograph SF Mono lacks, and a codepoint only LastResort has.
         for cp: UInt32 in [0x41, 0x4E2D, 0x10FFFD] {
             selfTestLog("face \(String(format: "U+%04X", cp)) "
-                        + "\(font.face(for: cp).map(family) ?? "none")")
+                        + "\(font.face(for: cp).map { $0.sprite ? "sprite" : family($0.font) } ?? "none")")
         }
 #endif
         DispatchQueue.global().async {
@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A backing scale the font was not made for: the terminal takes the font of that scale, the same one each time.
     func rescale(_ scale: Double) {
         guard let current = font, scale != current.scale else { return }
-        let next = fonts[scale] ?? Font(current.primary, points: current.points, scale: scale)
+        let next = fonts[scale] ?? Font(current.primary, points: current.points, scale: scale, thicken: current.thicken)
         (font, fonts[scale]) = (next, next)
         terminal?.setFont(next)
     }
@@ -119,15 +119,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate {
-    /// The Session's terminal, on a plain tmux client attached to it, at the window's grid. The terminal goes under
-    /// the card. The client ends with 0 on detach or when its Session dies, and nmux with
+    /// tmux 3.7c sends styled underlines and their colour only to a terminal whose XTVERSION it knows, and it knows
+    /// neither libghostty nor Ghostty; WezTerm's set is the narrowest with them. Only the tmux client sees the reply,
+    /// since tmux answers its panes' XTVERSION itself.
+    static let xtversion =
+        "WezTerm (nmux \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"))"
+
+    /// The Session's terminal, on a plain tmux client attached to it, at the window's grid. The client declares
+    /// overline, which xterm-256color's terminfo lacks, or tmux drops SGR 53 before nmux sees it. The terminal goes
+    /// under the card. The client ends with 0 on detach or when its Session dies, and nmux with
     /// it; any other end shows the client card with the client's last line.
     func start(_ tmux: Tmux, session id: SessionID, grid: Grid) {
         guard let font, let content else { return }
         let view: TerminalView
         do {
-            view = try TerminalView(argv: [tmux.path] + tmux.base + ["attach-session", "-t", "\(id)"],
-                                    grid: grid, context: sharedContext(), font: font)
+            view = try TerminalView(argv: [tmux.path] + tmux.base
+                                        + ["-T", "overline", "attach-session", "-t", "\(id)"],
+                                    grid: grid, context: sharedContext(), font: font,
+                                    xtversion: Self.xtversion)
         } catch {
             return attachFailed(.client("\(error)"))
         }

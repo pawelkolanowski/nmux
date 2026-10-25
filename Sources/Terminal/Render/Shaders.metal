@@ -24,6 +24,15 @@ struct Uniforms {
   bool use_linear_correction;
 };
 
+// The sRGB transfer function, from linear to encoded.
+float4 unlinearize(float4 linear) {
+  bool3 cutoff = linear.rgb <= 0.0031308;
+  float3 lower = linear.rgb * 12.92;
+  float3 higher = pow(linear.rgb, 1.0 / 2.4) * 1.055 - 0.055;
+  linear.rgb = mix(higher, lower, float3(cutoff));
+  return linear;
+}
+
 // A 4 byte RGBA colour, premultiplied.
 float4 load_color(uchar4 in_color) {
   float4 color = float4(in_color) / 255.0f;
@@ -67,6 +76,11 @@ enum CellTextFlags : uint8_t {
   IS_CURSOR_GLYPH = 2u,
 };
 
+enum CellTextAtlas : uint8_t {
+  ATLAS_GRAYSCALE = 0u,
+  ATLAS_COLOR = 1u,
+};
+
 struct CellText {
   // The glyph's place and size in the atlas.
   uint2 glyph_pos;
@@ -75,13 +89,14 @@ struct CellText {
   short2 bearings;
   ushort2 grid_pos;
   uchar4 color;
-  // Which atlas; nmux has only the alpha one yet.
+  // Which atlas, a CellTextAtlas.
   uint8_t atlas;
   uint8_t flags;
 };
 
 struct CellTextVertexOut {
   float4 position [[position]];
+  uint8_t atlas [[flat]];
   float4 color [[flat]];
   float2 tex_coord;
 };
@@ -101,6 +116,7 @@ vertex CellTextVertexOut cell_text_vertex(
   float2 pos = uniforms.cell_size * float2(in.grid_pos) + size * corner + offset;
 
   CellTextVertexOut out;
+  out.atlas = in.atlas;
   out.position = uniforms.projection_matrix * float4(pos.x, pos.y, 0.0f, 1.0f);
   // In pixels, as the sampler addresses the atlas.
   out.tex_coord = float2(in.glyph_pos) + size * corner;
@@ -116,11 +132,26 @@ vertex CellTextVertexOut cell_text_vertex(
   return out;
 }
 
-// A glyph is its colour times its mask.
+// A grayscale glyph is its colour times its mask. A colour glyph draws its own colours and ignores the cell's: the
+// sRGB texture hands them back linear, so they are encoded again, with the alpha divided out around it.
 fragment float4 cell_text_fragment(
   CellTextVertexOut in [[stage_in]],
-  texture2d<float> atlas [[texture(0)]]
+  texture2d<float> textureGrayscale [[texture(0)]],
+  texture2d<float> textureColor [[texture(1)]]
 ) {
   constexpr sampler textureSampler(coord::pixel, address::clamp_to_edge, filter::nearest);
-  return in.color * atlas.sample(textureSampler, in.tex_coord).r;
+  switch (in.atlas) {
+    default:
+    case ATLAS_GRAYSCALE:
+      return in.color * textureGrayscale.sample(textureSampler, in.tex_coord).r;
+    case ATLAS_COLOR: {
+      float4 color = textureColor.sample(textureSampler, in.tex_coord);
+      // A transparent pixel has no colour to divide out.
+      if (color.a == 0.0) return color;
+      color.rgb /= color.a;
+      color = unlinearize(color);
+      color.rgb *= color.a;
+      return color;
+    }
+  }
 }

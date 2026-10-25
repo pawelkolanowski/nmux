@@ -49,9 +49,17 @@ final class Appearance {
     func dress(_ view: TerminalView) { view.setColors(theme.terminal) }
 
     /// SF Mono at 14 pt at the backing scale; SF Mono is the system's monospaced face, which CoreText does not find by
-    /// name.
+    /// name. Under the self-test, NMUX_SELFTEST_FONT names a face file in the app's Resources/Fonts to draw in instead.
     func makeFont(scale: Double) -> Font {
-        Font(NSFont.monospacedSystemFont(ofSize: 14, weight: .regular), points: 14, scale: scale)
+        let size = 14.0
+        var face: CTFont = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+#if NMUX_SELFTEST
+        if let forced = SelfTest.font.flatMap({ Bundle.main.resourceURL?.appendingPathComponent("Fonts/\($0)") })
+            .flatMap({ (CTFontManagerCreateFontDescriptorsFromURL($0 as CFURL) as? [CTFontDescriptor])?.first }) {
+            face = CTFontCreateWithFontDescriptor(forced, size, nil)
+        }
+#endif
+        return Font(face, points: size, scale: scale)
     }
 }
 

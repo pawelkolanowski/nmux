@@ -36,8 +36,9 @@ public final class TerminalView: NSView {
     private var backingScale: CGFloat?
 
     /// Starts `argv` as the terminal's client on a pty of `grid` cells; `font` is the one every terminal of the
-    /// window's backing scale draws with. The client's output waits for `host.start()`.
-    public init(argv: [String], grid: Grid, context: RenderContext, font: Font) throws {
+    /// window's backing scale draws with; `xtversion` is the terminal's answer to XTVERSION. The client's output waits
+    /// for `host.start()`.
+    public init(argv: [String], grid: Grid, context: RenderContext, font: Font, xtversion: String = "") throws {
         // The host's handlers reach the view through the relay, which the view fills before the host starts.
         let relay = Relay(), waker = Waker()
         var handlers = VTHost.Handlers(
@@ -56,7 +57,7 @@ public final class TerminalView: NSView {
             if held { onMain { relay.view?.observer?.holdStarted() } }
         }
 #endif
-        host = try VTHost(argv: argv, grid: grid, cell: font.cell, handlers: handlers)
+        host = try VTHost(argv: argv, grid: grid, cell: font.cell, handlers: handlers, xtversion: xtversion)
         self.waker = waker
         cells = Cells(font: font)
         (self.context, renderer) = (context, try MetalRenderer(context))
@@ -72,9 +73,11 @@ public final class TerminalView: NSView {
 
     required init?(coder: NSCoder) { fatalError("TerminalView is never decoded") }
 
-    /// The theme's colours: the terminal's defaults and palette under the host's lock; every row draws again.
+    /// The theme's colours: the terminal's defaults and palette under the host's lock, and the text under a block
+    /// cursor; every row draws again.
     public func setColors(_ colors: TerminalColors) {
         host.setColors(colors)
+        cells.cursorText = colors.cursorText.map { [$0.r, $0.g, $0.b, 255] }
         cells.restyled = true
         resume()
     }
@@ -186,11 +189,11 @@ public final class TerminalView: NSView {
         if window.backingScaleFactor != font.scale { onScale(window.backingScaleFactor) }
     }
 
-    /// A new face, size or scale: the cell measured again and an empty atlas; the window then snaps to
+    /// A new face, size, thickening or scale: the cell measured again and an empty atlas; the window then snaps to
     /// whole cells of the new cell, and the terminal and the pty take its grid.
     public func setFont(_ font: Font) {
         let next = Cells(font: font)
-        (next.focused, next.blinkVisible) = (cells.focused, cells.blinkVisible)
+        (next.focused, next.blinkVisible, next.cursorText) = (cells.focused, cells.blinkVisible, cells.cursorText)
         cells = next
         renderer.dropAtlas()
         renderer.layer.contentsScale = font.scale
