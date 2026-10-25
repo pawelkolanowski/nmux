@@ -1,17 +1,19 @@
 import Foundation
 import Terminal
 
-/// What the mirror asks of the app: a listed Session's terminal, a Session shown, a failure's card and the quit.
+/// What the mirror asks of the app: a listed Session's terminal, a Session shown, the bar drawn again, a failure's card
+/// and the quit.
 protocol SessionMirrorDelegate: AnyObject {
     /// Nil when the terminal cannot start; the mirror then stops until the card's Restart.
     func makeSession(_ info: SessionInfo) -> Session?
     func show(_ id: SessionID)
+    func updateBar()
     func attachFailed(_ failure: AttachFailure)
     func quit()
 }
 
 /// Keeps nmux's Sessions in step with the server through the one control client: every Session the server lists is
-/// shown and attached, each once, in the order tmux created it, and a change made anywhere reaches nmux at once.
+/// shown and attached, each once, in the order tmux created it, and a change made anywhere reaches the bar at once.
 final class SessionMirror {
     weak var delegate: SessionMirrorDelegate?
     /// The tmux nmux found, and the one control client.
@@ -152,17 +154,20 @@ final class SessionMirror {
         }
     }
 
-    /// Creates a Session by name, numbered by tmux for an empty one, and shows it once it is listed.
-    func create(_ name: String) {
-        guard let control else { return }
+    /// Creates a Session by name, numbered by tmux for an empty one, and shows it once it is listed; `answer` gets the
+    /// new `$ID` or tmux's refusal.
+    func create(_ name: String, then answer: @escaping (Created) -> Void = { _ in }) {
+        guard let control else { return answer(.refused("tmux did not create the Session.")) }
         control.send(createCommand(name)) { ok, lines in
-            switch created(ok: ok, lines: lines) {
+            let result = created(ok: ok, lines: lines)
+            switch result {
             case .session(let id):
                 selfTestLog("created \(id)")
                 self.pendingActive = id
                 self.relist()
             case .refused(let error): selfTestLog("refused \(error)")
             }
+            answer(result)
         }
     }
 

@@ -18,6 +18,10 @@ private let leftShift = NSEvent.ModifierFlags(
     rawValue: NSEvent.ModifierFlags.shift.rawValue | UInt(NX_DEVICELSHIFTKEYMASK))
 
 struct KeyTests {
+    @Test("Cmd+T opens the New Session field") func cmdTOpensTheNewSessionField() {
+        #expect(shortcut("t", .command)?.action == .newSession)
+    }
+
     @Test("Cmd+Shift+[ and ] go to the previous and next Session") func cmdShiftAndGoToThePreviousAnd() {
         #expect(shortcut("[", [.command, .shift])?.action == .previousSession)
         #expect(shortcut("]", [.command, .shift])?.action == .nextSession)
@@ -41,16 +45,16 @@ struct KeyTests {
     }
 
     @Test("a shortcut needs exactly its mods") func aShortcutNeedsExactlyItsMods() {
-        #expect(shortcut("1", [.command, .option]) == nil)
-        #expect(shortcut("1", []) == nil)
+        #expect(shortcut("t", [.command, .option]) == nil)
+        #expect(shortcut("t", []) == nil)
     }
 
     @Test("Caps Lock does not stop a shortcut") func capsLockDoesNotStopAShortcut() {
-        #expect(shortcut("1", [.command, .capsLock])?.action == .session(1))
+        #expect(shortcut("t", [.command, .capsLock])?.action == .newSession)
     }
 
     @Test("the shortcut names are the self-test's") func theShortcutNamesAreTheSelfTests() {
-        #expect(shortcuts.map(\.action.name).joined(separator: " ") == "quit copy paste select-all clear "
+        #expect(shortcuts.map(\.action.name).joined(separator: " ") == "quit copy paste select-all clear new-session "
             + "previous-session next-session session-1 session-2 session-3 session-4 session-5 session-6 "
             + "session-7 session-8 last-session")
     }

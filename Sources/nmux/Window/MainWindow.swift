@@ -2,7 +2,7 @@ import AppKit
 import Terminal
 
 /// The one window, at the visible size of the screen under the pointer, and the frame it takes: titled, its title bar
-/// clear over the content. The green button zooms; nmux stays an ordinary window on the current Space.
+/// clear under the Session bar. The green button zooms; nmux stays an ordinary window on the current Space.
 func makeWindow() -> (NSWindow, frame: NSRect) {
     let screens = NSScreen.screens
 #if NMUX_SELFTEST
@@ -23,12 +23,20 @@ func makeWindow() -> (NSWindow, frame: NSRect) {
     return (window, frame)
 }
 
-/// Shrinks the window to the largest grid of whole cells its content holds, its top-left kept, and from then on resizes
-/// it by whole cells. Takes the size the content got, never the one asked for: Stage Manager may trim it.
-func snap(_ window: NSWindow, font: Font) {
+/// A Session's terminal in the window's content view: all of it under the Session bar.
+func terminalFrame(_ content: NSView) -> NSRect {
+    NSRect(x: 0, y: 0, width: content.bounds.width, height: content.bounds.height - SessionBar.height)
+}
+
+/// Shrinks the window to the largest grid of whole cells its content holds below `top` points, its top-left kept, and
+/// from then on resizes it by whole cells. Takes the size the content got, never the one asked for: Stage Manager may
+/// trim it.
+func snap(_ window: NSWindow, font: Font, top: CGFloat = 0) {
     guard let content = window.contentView?.bounds.size else { return }
-    let grid = font.grid(in: content)
-    var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: font.contentSize(grid)))
+    let grid = font.grid(in: NSSize(width: content.width, height: content.height - top))
+    var size = font.contentSize(grid)
+    size.height += top
+    var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
     frame.origin = NSPoint(x: window.frame.minX, y: window.frame.maxY - frame.height)
     window.contentResizeIncrements = NSSize(width: CGFloat(font.cell.width) / font.scale,
                                             height: CGFloat(font.cell.height) / font.scale)

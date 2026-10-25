@@ -30,9 +30,12 @@ run19() {
     check "with option-as-alt left, the left Option and b log ESC b" sent 11 1b62
     press 123 b00008 ef9c82
     check "Cmd+Left logs Ctrl+A" sent 123 01
-    press 18 100008 31
-    check "Cmd+1 logs the session-1 shortcut" logged "shortcut session-1"
-    check "and sends nothing to the PTY" not grep -q "^selftest: key 18 " "$LOG"
+    press 17 100008 74
+    check "Cmd+T logs the new-session shortcut" logged "shortcut new-session"
+    check "and sends nothing to the PTY" not grep -q "^selftest: key 17 " "$LOG"
+    # Cmd+T opened the New Session field, which holds the focus until Escape drops it.
+    echo "escape" >>"$TMUX_TMPDIR/keys"
+    check "Escape drops the field Cmd+T opened" within 3 logged "field closed"
     press 24 100008 3d
     check "Cmd+= reaches the encoder, which makes no bytes of it as Ghostty does" sent 24 none
     $T respawn-pane -k -t keys "/usr/bin/seq 1 500; /bin/stty raw -echo; exec /bin/cat -v"

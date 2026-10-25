@@ -2,13 +2,13 @@ import Foundation
 import Terminal
 
 /// The colours in force for one appearance: the fallback, Terminal.app's Basic and xterm's 16 to 255, with the accent
-/// the cards draw with, for the appearance it was resolved for.
+/// the Session bar and the cards draw with and the red for warnings, for the appearance it was resolved for.
 nonisolated struct Theme: Equatable, Sendable {
     var background, foreground, cursorColor: RGB
     /// Nil where the text under a block cursor takes the background in force, which a program may change.
     var cursorText, selectionBackground, selectionForeground: RGB?
     var palette: [RGB]
-    var accent: RGB
+    var accent, red: RGB
     var dark: Bool
 
     init(dark: Bool) {
@@ -16,6 +16,7 @@ nonisolated struct Theme: Equatable, Sendable {
         cursorColor = foreground
         palette = fallbackPalette
         accent = palette[5]
+        red = accent
         self.dark = dark
     }
 

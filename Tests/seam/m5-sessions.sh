@@ -94,7 +94,7 @@ run30() {
     : >"$TMUX_TMPDIR/keys30"
     launch 30 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys30" NMUX_SELFTEST_CELLS="0,2 0,0"
     want='$0:api $1:web $2:db active $0'
-    check "three Sessions are mirrored, \$0 active" within 10 is "$want" mirror30
+    check "three Sessions show as three pills, \$0 active" within 10 is "$want" mirror30
     check "each Session has one plain client of the app" within 3 is '$0 $1 $2 ' plainSessions
     check "the title names the active Session" logged "title nmux: api"
     $T new-session -d -s x

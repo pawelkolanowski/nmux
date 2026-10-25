@@ -7,6 +7,7 @@ import Terminal
 /// sees. Tests/seam/lib.sh describes every command and every line it logs.
 final class VTSelfTest: TerminalViewObserver {
     private var view: TerminalView
+    private let bar: SessionBar
     private let create: (String) -> Void
     private let perform: (AppAction) -> Void
     /// Hands every terminal the font of that backing scale, as a move to another screen does.
@@ -28,9 +29,10 @@ final class VTSelfTest: TerminalViewObserver {
     /// Every Session's, as the general pasteboard is shared.
     private let pasteboard = NSPasteboard.withUniqueName()
 
-    init(_ view: TerminalView, create: @escaping (String) -> Void, perform: @escaping (AppAction) -> Void,
-         rescale: @escaping (Double) -> Void, appearance: @escaping (Bool?) -> Void) {
-        (self.view, self.create, self.perform, self.rescale) = (view, create, perform, rescale)
+    init(_ view: TerminalView, bar: SessionBar, create: @escaping (String) -> Void,
+         perform: @escaping (AppAction) -> Void, rescale: @escaping (Double) -> Void,
+         appearance: @escaping (Bool?) -> Void) {
+        (self.view, self.bar, self.create, self.perform, self.rescale) = (view, bar, create, perform, rescale)
         self.appearance = appearance
         named = (SelfTest.cells ?? "").split(separator: " ").compactMap { pair in
             let xy = pair.split(separator: ",").compactMap { Int($0) }
@@ -125,6 +127,24 @@ final class VTSelfTest: TerminalViewObserver {
             "pasteboard": { self.pasteboardLine($0.first) },
             "rect": { if $0.isEmpty { self.rect() } },
             "create": { self.create($0.joined(separator: " ")) },
+            "pill": { args in self.pill(args) { self.click($0, "pill \(args[0])") } },
+            "washback": { if $0.isEmpty { self.washBack() } },
+            "plus": { args in
+                if args.isEmpty { self.click(self.bar.plus, "plus") } else if args == ["rest"] { self.bar.plus.enter() }
+            },
+            "cup": { args in
+                if args.isEmpty { self.click(self.bar.cup, "cup") } else if args == ["rest"] { self.bar.cup.enter() }
+            },
+            "type": { self.type($0.joined(separator: " ")) },
+            "return": { if $0.isEmpty { self.type("\r", keyCode: KeyCode.return) } },
+            "escape": { if $0.isEmpty { self.type("\u{1b}", keyCode: KeyCode.escape) } },
+            "width": { args in
+                guard args.count == 1, let width = Double(args[0]), let window = self.view.window,
+                      let content = window.contentView else { return }
+                self.readBack = false
+                window.setContentSize(NSSize(width: width, height: content.bounds.height))
+            },
+            "barback": { if $0.isEmpty { self.barBack() } },
             "goto": { args in
                 if let action = shortcuts.map(\.action).first(where: { $0.name == args.first }) { self.perform(action) }
             },
@@ -153,6 +173,17 @@ final class VTSelfTest: TerminalViewObserver {
             else { return }
             NSApp.sendEvent(event)
         }
+    }
+
+    /// The n-th pill from 1, when there is one.
+    private func pill(_ args: [String], _ body: (Pill) -> Void) {
+        guard args.count == 1, let n = Int(args[0]), bar.pills.indices.contains(n - 1) else { return }
+        body(bar.pills[n - 1])
+    }
+
+    /// `washback`: 2 pt from the bar's right end, toward the accent.
+    private func washBack() {
+        washBack(bar, at: NSPoint(x: bar.bounds.width - 2, y: bar.bounds.midY), toward: ChromeTheme.current.accent)
     }
 
     /// A mouse line, `click`, `move`, `wheel`, `pointer` or `drag` and its words.
@@ -207,6 +238,67 @@ final class VTSelfTest: TerminalViewObserver {
         return view.convert(NSPoint(x: (Double(xy[0]) + across) * Double(cell.width) / scale,
                                     y: view.bounds.height - (Double(xy[1]) + 0.5) * Double(cell.height) / scale),
                             to: nil)
+    }
+
+    /// A click on the middle of a view in the bar, when the window's hit test finds it there; `<name> missed` when not.
+    private func click(_ target: NSView, _ name: String) {
+        guard let window = bar.window, let frameView = window.contentView?.superview else { return }
+        let at = target.convert(NSPoint(x: target.bounds.midX, y: target.bounds.midY), to: nil)
+        guard frameView.hitTest(frameView.convert(at, from: nil)) === target,
+              let down = mouseEvent(.leftMouseDown, at, [], window) else {
+            return selfTestLog("\(name) missed")
+        }
+        target.mouseDown(with: down)
+    }
+
+    private func type(_ text: String, keyCode: UInt16 = 0) {
+        guard let window = view.window else { return }
+        for c in text.map(String.init) {
+            for kind in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: kind, location: .zero, modifierFlags: [], timestamp: 0,
+                                                   windowNumber: window.windowNumber, context: nil, characters: c,
+                                                   charactersIgnoringModifiers: c, isARepeat: false, keyCode: keyCode)
+                else { return }
+                NSApp.sendEvent(event)
+            }
+        }
+    }
+
+    private func barBack() {
+        guard let rep = bar.bitmapImageRepForCachingDisplay(in: bar.bounds) else { return }
+        bar.cacheDisplay(in: bar.bounds, to: rep)
+        let scale = CGFloat(rep.pixelsWide) / bar.bounds.width
+        let got = rgb(rep.colorAt(x: Int((bar.bounds.width - 2) * scale), y: Int(bar.bounds.midY * scale)))
+        let word = got.isEmpty ? "none" : got == rgb(ChromeTheme.current.bg) ? "ok"
+            : got.map { String(format: "%02x", $0) }.joined()
+        selfTestLog("barback bg \(word)")
+    }
+
+    /// The window's layers as they show mid-animation, read at a point of a view in the bar.
+    private func washBack(_ view: NSView, at point: NSPoint, toward tint: NSColor) {
+        guard let content = bar.window?.contentView, let layer = content.layer else { return }
+        let scale = bar.window?.backingScaleFactor ?? 2
+        let width = Int(content.bounds.width * scale), height = Int(content.bounds.height * scale)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        let theme = ChromeTheme.current
+        // The background under the render, so a layer `render(in:)` skips still reads as the bar, in either appearance.
+        ctx.setFillColor(theme.bg.withAlphaComponent(1).cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.scaleBy(x: scale, y: scale)
+        (layer.presentation() ?? layer).render(in: ctx)
+        guard let image = ctx.makeImage() else { return }
+        let at = view.convert(point, to: content)
+        let got = NSBitmapImageRep(cgImage: image)
+            .colorAt(x: Int(at.x * scale), y: Int((content.bounds.height - at.y) * scale))?.usingColorSpace(.sRGB)
+        let (g, bg, toward) = (rgb(got), rgb(theme.bg), rgb(tint))
+        // Tinted: off the background and nearer the tint than the background is; the colour space shifts a channel a
+        // step.
+        func distance(_ a: [Int], _ b: [Int]) -> Int { zip(a, b).map { abs($0 - $1) }.reduce(0, +) }
+        let word = g.isEmpty ? "none" : g == bg ? "plain"
+            : distance(g, toward) < distance(bg, toward) ? "tinted" : g.map { String(format: "%02x", $0) }.joined()
+        selfTestLog("washback \(word)")
     }
 
     private func pasteboardLine(_ written: String?) {
@@ -276,11 +368,11 @@ final class VTSelfTest: TerminalViewObserver {
         steps += 1
         let grid = view.grid, font = view.font
         switch steps {
-        case 1: window.setContentSize(font.contentSize(Grid(cols: grid.cols - 3, rows: grid.rows - 2)))
+        case 1: window.setContentSize(underBar(font.contentSize(Grid(cols: grid.cols - 3, rows: grid.rows - 2))))
         case 2:
             var size = font.contentSize(grid)
             size.width += CGFloat(font.cell.width) / font.scale / 2
-            window.setContentSize(size)
+            window.setContentSize(underBar(size))
         case 3: rescale(1)
         case 4: rescale(2)
         default: return
@@ -373,6 +465,15 @@ final class VTSelfTest: TerminalViewObserver {
         poll()
     }
 }
+
+/// A colour's sRGB bytes, none when it has no sRGB form.
+private func rgb(_ c: NSColor?) -> [Int] {
+    guard let c = c?.usingColorSpace(.sRGB) else { return [] }
+    return [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
+}
+
+/// The content size whose terminal is `size`, under the Session bar.
+private func underBar(_ size: NSSize) -> NSSize { NSSize(width: size.width, height: size.height + SessionBar.height) }
 
 private func fromHex(_ hex: String) -> String {
     let digits = Array(hex.utf8)

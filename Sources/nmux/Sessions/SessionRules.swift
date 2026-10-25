@@ -72,3 +72,25 @@ nonisolated struct Bell: Equatable {
 nonisolated func bell(active: Bool, front: Bool, bouncedSinceActive: Bool) -> Bell {
     Bell(mark: !active, attention: !front && !bouncedSinceActive)
 }
+
+/// The New Session field while it is open: the name last submitted and tmux's refusal of it, if any.
+nonisolated struct Draft: Equatable {
+    var name = ""
+    var error: String?
+}
+
+/// What happens to the draft: the field opens, its name is submitted, `create` answers, or the field goes.
+nonisolated enum DraftEvent: Equatable {
+    case open, submit(String), answer(Created), cancel
+}
+
+/// Open keeps a draft and its text, or starts an empty one; a submit drops the old refusal; a new `$ID` or a cancel
+/// ends the draft, and a refusal keeps the submitted name with tmux's error. An answer after a cancel changes nothing.
+nonisolated func nextDraft(_ draft: Draft?, _ event: DraftEvent) -> Draft? {
+    switch event {
+    case .open: draft ?? Draft()
+    case .submit(let name): draft.map { _ in Draft(name: name) }
+    case .answer(.refused(let error)): draft.map { Draft(name: $0.name, error: error) }
+    case .answer(.session), .cancel: nil
+    }
+}

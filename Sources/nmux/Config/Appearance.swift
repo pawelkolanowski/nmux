@@ -1,10 +1,12 @@
 import AppKit
 import Terminal
 
-/// What an apply reaches: the window and every Session's terminal.
+/// What an apply reaches: the window, every Session's terminal and the Session bar.
 protocol AppearanceHost: AnyObject {
     var window: NSWindow? { get }
     var terminals: [TerminalView] { get }
+    /// The New Session field's text and caret in the new colours.
+    func colourField()
 }
 
 /// The Fallback look for the window's appearance and SF Mono, and the one apply that puts the colours on screen: at
@@ -44,12 +46,13 @@ final class Appearance {
         for view in host.terminals { view.setColors(theme.terminal) }
         ChromeTheme.current = ChromeTheme(theme)
         window.backgroundColor = nsColor(theme.background)
-        // Every drawn view draws again, the card among them.
+        // Every drawn view draws again: the bar's, the tips over the terminal and the card among them.
         func redraw(_ view: NSView) {
             view.needsDisplay = true
             view.subviews.forEach(redraw)
         }
         window.contentView.map(redraw)
+        host.colourField()
     }
 
     /// A new Session's terminal starts in the colours in force. Under the self-test, the `NMUX_SELFTEST_*` variables

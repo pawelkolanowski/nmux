@@ -5,8 +5,10 @@ import Terminal
 /// in the appearance, and the prompts in `AppDelegate+Prompts.swift`.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
-    /// The window's content view, which holds the terminals and the card.
+    /// The window's content view, which holds the bar, the terminals and the card.
     var content: NSView?
+    var bar: SessionBar?
+    let keepAwake = KeepAwake()
     let mirror = SessionMirror()
     let appearance = Appearance()
 #if NMUX_SELFTEST
@@ -22,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var metallib = Bundle.main.url(forResource: "nmux", withExtension: "metallib")
     /// The grid the window held when nmux attached.
     var launchGrid = Grid(cols: 80, rows: 24)
+    /// The New Session field while it is open.
+    var draft: Draft?
     /// The Dock icon bounced for a bell, and nmux has not been active since.
     var bouncedSinceActive = false
     /// The brew the card's Install runs, and the output of its run.
@@ -38,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let (window, frame) = makeWindow()
         self.window = window
         content = window.contentView
+        let bar = SessionBar(keepAwake: keepAwake, show: { self.show($0) }, draft: { self.drafted($0) })
+        content?.addSubview(bar)
+        self.bar = bar
         mirror.delegate = self
         appearance.host = self
         // The colours and the font go in before the window shows, so its first frame never flashes another background.
@@ -48,9 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The frame goes in before the window shows, so it never appears at another size first.
         window.setFrame(frame, display: false)
         window.makeKeyAndOrderFront(nil)
-        // With Stage Manager on, the first order front may come out narrower.
+        // With Stage Manager on, the first order front may come out narrower; this set covers the bar.
         window.setFrame(frame, display: true)
         selfTestLog("visible \(rectLog(frame))")
+        // limitation: each step of a live resize rebuilds every pill; lay out the old ones instead once that stutters.
+        NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window,
+                                               queue: .main) { _ in
+            MainActor.assumeIsolated { self.updateBar() }
+        }
+        updateBar()
         appearance.follow(window)
         attach(window)
     }
@@ -59,8 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// lookup may wait 2 s on the login shell, so it and the Session run off the main thread.
     func attach(_ window: NSWindow) {
         guard let font, let content else { return }
-        snap(window, font: font)
-        let grid = font.grid(in: content.bounds.size)
+        snap(window, font: font, top: SessionBar.height)
+        let grid = font.grid(in: terminalFrame(content).size)
         logFit(font, grid: grid)
 #if NMUX_SELFTEST
         // A Latin letter, an ideograph SF Mono lacks, and a codepoint only LastResort has.
@@ -91,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func logFit(_ font: Font, grid: Grid) {
         guard let window, let content else { return }
-        let cell = font.cell, size = content.bounds.size
+        let cell = font.cell, size = terminalFrame(content).size
         selfTestLog("cell \(cell.width)x\(cell.height) baseline \(cell.baseline) scale \(logNumber(font.scale))")
         selfTestLog("grid \(grid.cols)x\(grid.rows) content \(logNumber(size.width))x\(logNumber(size.height))")
         selfTestLog("window \(rectLog(window.frame))")
@@ -132,14 +145,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             vtSelfTest?.follow(session.view)
 #endif
         }
-        // An open card keeps the focus.
-        if card == nil { window?.makeFirstResponder(session.view) }
+        // An open field or card keeps the focus, so a Session made elsewhere drops nothing typed.
+        if card == nil, draft == nil { window?.makeFirstResponder(session.view) }
         // The title names the Session for Mission Control, the Window menu and the Dock's menu; tmux's titles never
         // reach it.
         window?.title = "nmux: \(session.info.name)"
         selfTestLog("mirror " + sessions.map { "\($0.info.id):\($0.info.name)" }.joined(separator: " ")
                     + " active \(id)")
         selfTestLog("title \(window?.title ?? "")")
+        updateBar()
+    }
+
+    /// The one update of the Session bar, for every change of the Sessions and each window resize; it logs the gap
+    /// between the window's top and the shown terminal.
+    func updateBar() {
+        guard let bar else { return }
+        bar.update(sessions, active: mirror.active, draft: draft)
+        if let terminal, let content {
+            selfTestLog("bar \(logNumber(content.bounds.height - terminal.frame.maxY))")
+        }
+    }
+
+    /// The New Session field: Cmd+T and the plus open it, its Return creates the Session, and its Escape or lost focus
+    /// drops it. A field that goes hands the focus back to the shown terminal.
+    func drafted(_ event: DraftEvent) {
+        // The focus handed back ends the field's editing, which cancels once more.
+        if event == .cancel, draft == nil { return }
+        let was = draft
+        draft = nextDraft(draft, event)
+        if was == nil, draft != nil { selfTestLog("field open") }
+        if case .answer(.refused(let error)) = event, draft != nil { selfTestLog("field refused \(error)") }
+        if was != nil, draft == nil {
+            selfTestLog("field closed")
+            window?.makeFirstResponder(terminal)
+        }
+        updateBar()
+        if case .submit(let name) = event, draft != nil { mirror.create(name) { self.drafted(.answer($0)) } }
     }
 
     /// A BEL in a Session: one that is not shown takes the Bell mark, and while nmux is behind another app the Dock
@@ -147,7 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func rang(_ session: Session) {
         let rule = bell(active: session === mirror.activeSession, front: NSApp.isActive,
                         bouncedSinceActive: bouncedSinceActive)
-        if rule.mark { session.bellMark = true }
+        if rule.mark, !session.bellMark {
+            session.bellMark = true
+            updateBar()
+        }
         selfTestLog("bell \(session.info.id) \(session.bellMark ? "mark" : "none")")
         if rule.attention {
             bouncedSinceActive = true
@@ -175,14 +219,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// An app shortcut, from the menu or the view.
     func perform(_ action: AppAction) {
         selfTestLog("shortcut \(action.name)")
-        // A card's keys wait for it, and the menu's Paste and Clear reach the terminal past its focus.
-        if card != nil, [.paste, .clear].contains(action) { return }
+        // A card's keys wait for it, and the menu's Paste and Clear reach the terminal past its focus, and New
+        // Session's field would take the focus from it.
+        if card != nil, [.paste, .clear, .newSession].contains(action) { return }
+        // While New Session's field has the focus, Copy, Paste and Select All edit its name, never the terminal.
+        if bar?.drafting == true, let edit = [AppAction.copy: #selector(NSText.copy(_:)),
+                                               .paste: #selector(NSText.paste(_:)),
+                                               .selectAll: #selector(NSText.selectAll(_:))][action] {
+            NSApp.sendAction(edit, to: nil, from: nil)
+            return
+        }
         switch action {
         case .quit: quit()
         case .clear: clear()
         case .copy: terminal?.copySelection()
         case .paste: paste()
         case .selectAll: terminal?.selectAll()
+        case .newSession: drafted(.open)
         case .session(let n): move(.number(n))
         case .lastSession: move(.last)
         case .previousSession: move(.previous)
@@ -210,9 +263,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         control.send("clear-history -t '\(session)'") { _, _ in host.send([0x0C]) }
     }
 
-    /// A quit during the install ends brew and whatever it started; the control client goes with nmux.
+    /// A quit during the install ends brew and whatever it started; the control client goes with nmux, and the
+    /// Keep-awake cup lets the Mac sleep again.
     func applicationWillTerminate(_ notification: Notification) {
         if let brewPID { kill(-brewPID, SIGTERM) }
+        if keepAwake.hold != nil {
+            keepAwake.release()
+            selfTestLog("cup released")
+        }
         mirror.stop()
     }
 
@@ -253,7 +311,7 @@ extension AppDelegate: SessionMirrorDelegate {
         view.askClipboard = { self.ask($0, $1) }
         view.onScale = { [weak self] in self?.rescale($0) }
         view.onSnap = { [weak self, weak view] in
-            if let self, let window = self.window, let view { snap(window, font: view.font) }
+            if let self, let window = self.window, let view { snap(window, font: view.font, top: SessionBar.height) }
         }
         view.shortcut = { event in
             guard let s = shortcut(event.characters(byApplyingModifiers: []), event.modifierFlags) else { return false }
@@ -262,8 +320,8 @@ extension AppDelegate: SessionMirrorDelegate {
         }
         view.onBell = { [weak session] in if let session { self.rang(session) } }
 #if NMUX_SELFTEST
-        if let vtSelfTest { vtSelfTest.add(view) } else {
-            vtSelfTest = VTSelfTest(view, create: { self.mirror.create($0) }, perform: { self.perform($0) },
+        if let vtSelfTest { vtSelfTest.add(view) } else if let bar {
+            vtSelfTest = VTSelfTest(view, bar: bar, create: { self.mirror.create($0) }, perform: { self.perform($0) },
                                      rescale: { self.rescale($0) }, appearance: { dark in
                                          self.appearance.loadTheme(dark: dark)
                                          self.appearance.apply()
@@ -271,7 +329,7 @@ extension AppDelegate: SessionMirrorDelegate {
         }
 #endif
         view.isHidden = true
-        view.frame = content.bounds
+        view.frame = terminalFrame(content)
         view.autoresizingMask = [.width, .height]
         content.addSubview(view, positioned: .below, relativeTo: card)
         view.host.start()
@@ -282,4 +340,6 @@ extension AppDelegate: SessionMirrorDelegate {
 
 extension AppDelegate: AppearanceHost {
     var terminals: [TerminalView] { sessions.map(\.view) }
+
+    func colourField() { bar?.field.colour() }
 }

@@ -6,7 +6,7 @@ import AppKit
 /// What an app shortcut does. Its name is the self-test's.
 nonisolated enum AppAction: Hashable, Sendable {
     case quit, copy, paste, selectAll, clear
-    case previousSession, nextSession, session(Int), lastSession
+    case newSession, previousSession, nextSession, session(Int), lastSession
 
     var name: String {
         switch self {
@@ -15,6 +15,7 @@ nonisolated enum AppAction: Hashable, Sendable {
         case .paste: "paste"
         case .selectAll: "select-all"
         case .clear: "clear"
+        case .newSession: "new-session"
         case .previousSession: "previous-session"
         case .nextSession: "next-session"
         case .session(let n): "session-\(n)"
@@ -44,6 +45,7 @@ nonisolated let shortcuts: [Shortcut] = [
     Shortcut(menu: .edit, title: "Paste", key: "v", flags: .command, action: .paste),
     Shortcut(menu: .edit, title: "Select All", key: "a", flags: .command, action: .selectAll),
     Shortcut(menu: .edit, title: "Clear", key: "k", flags: .command, action: .clear),
+    Shortcut(menu: .sessions, title: "New Session", key: "t", flags: .command, action: .newSession),
     Shortcut(menu: .sessions, title: "Previous Session", key: "[", flags: [.command, .shift], action: .previousSession),
     Shortcut(menu: .sessions, title: "Next Session", key: "]", flags: [.command, .shift], action: .nextSession),
 ] + (1...8).map { Shortcut(menu: .sessions, title: "Session \($0)", key: "\($0)", flags: .command,

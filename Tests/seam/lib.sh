@@ -71,6 +71,20 @@
 #   pasteboard <hex>    writes that string to the pasteboard.
 #   create [<name>]     creates a Session through `create`.
 #   goto <shortcut>     performs that Session shortcut through `perform`.
+#   pill <n>            clicks the middle of the n-th pill from 1, through the window's hit test, and logs
+#                       `pill <n> missed` when the click lands elsewhere.
+#   width <points>      sets the content's width and reads one frame back again.
+#   barback             draws the Session bar off screen and logs `barback bg ok` when its right end, past the row,
+#                       shows the theme's background, else `barback bg <hex>`.
+#   plus                clicks the plus the same way as `pill`.
+#   plus rest           has the pointer come to rest on the plus.
+#   type <text>         presses one key per character through NSApp.sendEvent, to whichever view has the focus.
+#   return, escape      press those keys the same way.
+#   cup                 clicks the Keep-awake cup the same way as the plus.
+#   cup rest            has the pointer come to rest on the cup.
+#   washback            draws the window's layers as they show now and logs `washback plain` when the bar's right
+#                       end shows the theme's background, `washback tinted` when it lies nearer the accent than that,
+#                       else `washback <hex>`.
 
 APP=${APP:-build/selftest/nmux.app}
 BIN=$APP/Contents/MacOS/nmux
@@ -125,6 +139,7 @@ launch() { LOG=build/seam/$1.log; shift; rm -f "$LOG"; env -u TMUX "$@" "$BIN" >
 # attached: the first Session, the lowest $ID.
 attached() { sed -n "s/^selftest: attached \([^ ]*\)$/\1/p" "$LOG" | head -1; }
 isAttached() { [ -n "$(attached)" ]; }
+hasSession() { $T has-session -t "$1" 2>/dev/null; }
 # holds: reads `W H C R w h s` and passes when content W x H points is C x R cells of w x h pixels at scale s,
 # within the half point it is rounded up to.
 holds() { awk '{ exit !(($3 * $5 / $7 - $1) ^ 2 <= 0.25 && ($4 * $6 / $7 - $2) ^ 2 <= 0.25) }'; }
