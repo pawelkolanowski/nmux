@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400">
+  <defs>
+    <linearGradient id="sakura" x1="0" y1="0" x2="0" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FDEBF5"/>
+      <stop offset="1" stop-color="#F6D3E6"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="400" fill="url(#sakura)"/>
+  <path d="M262 190 H362" stroke="#CF76A4" stroke-width="10" stroke-linecap="round"/>
+  <path d="M346 168 L376 190 L346 212" fill="none" stroke="#CF76A4" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

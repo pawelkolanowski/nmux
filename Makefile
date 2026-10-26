@@ -7,8 +7,10 @@ ZIP  := vendor/ghostty-vt.xcframework.zip
 LOCK := vendor/libghostty-vt.lock
 # The zip unpacked, once it passed its lock.
 VT   := build/ghostty-vt.xcframework/macos-arm64_x86_64
+# The release download, named for the version Info.plist carries.
+DMG  := build/nmux-$(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist).dmg
 
-.PHONY: all run install test seam references bench clean
+.PHONY: all run install dmg test seam references bench clean
 
 all: $(APP)
 
@@ -18,6 +20,12 @@ run: $(APP)
 install: $(APP)
 	rm -rf /Applications/nmux.app
 	cp -R $(APP) /Applications/
+
+dmg: $(DMG)
+
+# The disk opens on nmux.app, an arrow and a link to /Applications, so a drag installs it.
+$(DMG): $(APP) Tools/dmg/dmg.sh Tools/dmg/background.svg
+	Tools/dmg/dmg.sh $(APP) $@
 
 # The logic tests first, so they fail before the slow seam; the smoke launch then starts the app that ships.
 test: $(APP) $(SELFTEST)
