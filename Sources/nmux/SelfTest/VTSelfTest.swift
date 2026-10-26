@@ -158,6 +158,12 @@ final class VTSelfTest: TerminalViewObserver {
                 window.setContentSize(NSSize(width: width, height: content.bounds.height))
             },
             "barback": { if $0.isEmpty { self.barBack() } },
+            "drawback": { if $0.isEmpty { self.view.readBackground { selfTestLog("drawback \($0)") } } },
+            "appearance": { args in
+                guard args.count == 1,
+                      let name = ["light": NSAppearance.Name.aqua, "dark": .darkAqua][args[0]] else { return }
+                self.bar.window?.appearance = NSAppearance(named: name)
+            },
             "goto": { args in
                 if let action = shortcuts.map(\.action).first(where: { $0.name == args.first }) { self.perform(action) }
             },

@@ -30,3 +30,20 @@ let arrows: NSEvent.ModifierFlags = [.function, .numericPad]
 let decorated = Cell(width: 17, height: 33, baseline: 6, underlinePosition: 29, underlineThickness: 2,
                      strikethroughPosition: 20, strikethroughThickness: 2, cursorThickness: 1, faceWidth: 17,
                      faceHeight: 33, faceY: 0, iconHeight: 33, iconHeightSingle: 33)
+
+// The config a text parses to, its problems left out.
+func parsed(_ text: String) -> Config { parseConfig(text).0 }
+
+// Theme files in two folders, a user one that shadows the bundle: `themeFile` reads them as the lookup does.
+private let themeFiles = ["/u/nmux/themes/Dracula": "background = #000001", "/b/Dracula": "background = #000002",
+                          "/b/Nord": "background = #000003", "/any/where": "background = #000004", "/b/../b/Nord": "x",
+                          "/b/x/Nord": "x"]
+let lookupFolders = themeFolders(ConfigLocation(xdg: "/u", home: "/h"), bundle: "/b")
+// A user file that is not UTF-8 is passed over for the bundle's.
+private let themeData = themeFiles.mapValues { Data($0.utf8) }.merging(["/u/nmux/themes/Nord": Data([0xff])]) { $1 }
+func themeFile(_ path: String) -> Data? { themeData[path] }
+
+// Fuwafuwa Sakura, nmux's own theme, on the light side.
+let sakura = Theme(parseTheme((try? String(contentsOfFile: repositoryPath("Resources/themes/Fuwafuwa Sakura"),
+                                           encoding: .utf8)) ?? ""),
+                   dark: false)

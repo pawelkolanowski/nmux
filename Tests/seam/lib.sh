@@ -8,20 +8,16 @@
 # - About two and a half minutes for every run.
 #
 # The self-test's command language. The self-test build logs `selftest: <event>` lines on stderr, which `launch` keeps
-# in build/seam/<run>.log. Its tmux runs on the private server `-L nmux-test -f /dev/null`.
+# in build/seam/<run>.log. Its tmux runs on the private server `-L nmux-test -f /dev/null`, and Open Config logs
+# `open-config <path>` in place of opening an editor.
 #
 # Variables:
 #   NMUX_SELFTEST_SCREEN=<file>    each time output settles for 0.4 s, the screen's text is written to the file.
 #   NMUX_SELFTEST_CELLS="x,y ..."  the cells, apart by spaces, logged each time the frames settle for 0.4 s.
 #   NMUX_SELFTEST_KEYS=<file>      each line the file gains is one command, below.
 #   NMUX_SELFTEST_PRESS=<action>   pressed on every card that offers it, a moment after the card shows.
-#   NMUX_SELFTEST_FONT=<file>      a face file in the app's Resources/Fonts to draw in, in place of SF Mono.
+#   NMUX_SELFTEST_FONT=<file>      a face file in the app's Resources/Fonts to draw in, in place of the config's.
 #   NMUX_SELFTEST_NO_KNOWN_PATHS   hides the known paths of tmux, so the login shell alone decides.
-#   NMUX_SELFTEST_OPTION_AS_ALT=<false|true|left|right>, NMUX_SELFTEST_COPY_ON_SELECT=true,
-#   NMUX_SELFTEST_CLIPBOARD_WRITE=<allow|deny|ask>, NMUX_SELFTEST_CLIPBOARD_READ=<allow|deny|ask>
-#                                  the terminal's input settings.
-#   NMUX_SELFTEST_SELECTION_COLORS="<rrggbb> <rrggbb>"
-#                                  the selection's background and text.
 #
 # On its own, the self-test:
 #   - logs the bytes parsed each time output settles for 0.4 s; the first time, it probes the terminal.
@@ -94,12 +90,18 @@
 #   close button        presses the window's close button, as Closing nmux does.
 #   box                 clicks the end of the card's checkbox label through the window's hit test, and logs
 #                       `box missed` when the click lands elsewhere.
+#   appearance <light|dark>
+#                       sets the window's own appearance, as a switch of the system's would, and touches no setting.
+#   drawback            reads one frame of the shown Session back and logs `drawback <rrggbb> <aa>`, the first blank
+#                       cell's centre, its colour with the alpha divided out.
 
 APP=${APP:-build/selftest/nmux.app}
 BIN=$APP/Contents/MacOS/nmux
 # The app's tmux sockets land in a short TMUX_TMPDIR of the seam's own, never the author's: a socket path over 104
 # bytes fails, so the folder sits in ~/.cache.
 export TMUX_TMPDIR="$HOME/.cache/nt-$$"
+# Every run reads its config from the seam's own folder, never the author's.
+export XDG_CONFIG_HOME="$TMUX_TMPDIR/config"
 T="env -u TMUX tmux -L nmux-test -f /dev/null"
 FAILS=0
 PID=
@@ -130,19 +132,23 @@ ended() {
     local _gone; within 3 not alive; _gone=$?
     alive && kill -9 "$PID"; wait "$PID"; status=$?; PID=; return $_gone
 }
-# fresh: an empty private server of the seam's own, and no file an earlier run left.
+# fresh: an empty private server of the seam's own, no file an earlier run left, and the fallback look in the config.
 # The seam starts the server, so its panes run the seam's shell, never a run's fake one, and it outlives its last
 # Session. The tmux socket folder stays, so the last check still finds a default socket any run made.
 fresh() {
     $T kill-server 2>/dev/null
     mkdir -p "$TMUX_TMPDIR" build/seam
     find "$TMUX_TMPDIR" -mindepth 1 -maxdepth 1 ! -name "tmux-$(id -u)" -exec rm -rf {} +
+    config
     $T start-server \; set -s exit-empty off
 }
 teardown() { [ -n "$PID" ] && alive && stop; PID=; $T kill-server 2>/dev/null; }
 finish() { teardown; rm -rf "$TMUX_TMPDIR"; }
 trap finish EXIT
 
+# config [<line>...]: the config every later launch reads, the fallback look and the lines given. Runs 1 to 36 check
+# the engine in Basic's colours; runs 37 on write their own.
+config() { mkdir -p "$XDG_CONFIG_HOME/nmux" && printf '%s\n' "theme = nope" "$@" >"$XDG_CONFIG_HOME/nmux/config"; }
 # launch <run> [VAR=value...]: the app, its log in build/seam/<run>.log.
 launch() { LOG=build/seam/$1.log; shift; rm -f "$LOG"; env -u TMUX "$@" "$BIN" >"$LOG" 2>&1 & PID=$!; }
 # attached: the first Session, the lowest $ID.

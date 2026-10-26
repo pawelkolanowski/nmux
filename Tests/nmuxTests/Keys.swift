@@ -40,6 +40,11 @@ struct KeyTests {
         #expect(shortcut("9", .command)?.action == .lastSession)
     }
 
+    @Test("Cmd+, opens the config and Cmd+Shift+, reloads it") func cmdOpensTheConfigAndCmdShiftReloads() {
+        #expect(shortcut(",", .command)?.action == .openConfig)
+        #expect(shortcut(",", [.command, .shift])?.action == .reloadConfig)
+    }
+
     @Test("Cmd+K, Cmd+C, Cmd+V, Cmd+A and Cmd+Q are the app's") func cmdKCmdCCmdVCmdA() {
         #expect(["k", "c", "v", "a", "q"].compactMap { shortcut($0, .command)?.action }
             == [.clear, .copy, .paste, .selectAll, .quit])
@@ -59,9 +64,10 @@ struct KeyTests {
     }
 
     @Test("the shortcut names are the self-test's") func theShortcutNamesAreTheSelfTests() {
-        #expect(shortcuts.map(\.action.name).joined(separator: " ") == "quit copy paste select-all clear new-session "
-            + "close-session close-nmux previous-session next-session session-1 session-2 session-3 session-4 "
-            + "session-5 session-6 session-7 session-8 last-session")
+        #expect(shortcuts.map(\.action.name).joined(separator: " ")
+            == "open-config reload-config quit copy paste select-all clear new-session close-session close-nmux "
+            + "previous-session next-session session-1 session-2 session-3 session-4 session-5 session-6 session-7 "
+            + "session-8 last-session")
     }
 
     @Test("Cmd+Left, Cmd+Right and Cmd+Backspace send Ctrl+A, Ctrl+E and Ctrl+U")

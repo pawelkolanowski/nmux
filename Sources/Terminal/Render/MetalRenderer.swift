@@ -66,6 +66,8 @@ final class MetalRenderer {
     var onLate: () -> Void = {}
     private lazy var readbackAllocator = device.makeCommandAllocator()
 #endif
+    /// `background-opacity`; below 1 the layer is not opaque, so the window behind shows through.
+    var opacity = 1.0 { didSet { layer.isOpaque = opacity >= 1 } }
     private let device: MTLDevice
     private let queue: MTL4CommandQueue
     private let commandBuffer: MTL4CommandBuffer
@@ -159,6 +161,9 @@ final class MetalRenderer {
         cells.writeText(slot.text.contents().bindMemory(to: CellText.self, capacity: max(count, 1)))
         let size = layer.drawableSize
         let cell = cells.font.cell
+        // The default background at `background-opacity`; a cell with its own background stays opaque.
+        var background = cells.background
+        background.w = UInt8((opacity * 255).rounded())
         // Text under a block cursor takes the theme's cursor-text, else the background's colour; no other cursor covers
         // its text.
         let block = cells.cursorShape == .block ? cells.cursorCell.map { SIMD2(UInt16($0.x), UInt16($0.y)) } : nil
@@ -168,7 +173,7 @@ final class MetalRenderer {
                                 gridSize: [UInt16(cells.cols), UInt16(cells.rows)],
                                 cursorPos: block ?? SIMD2(repeating: .max),
                                 cursorColor: cells.cursorText ?? cells.background,
-                                bgColor: cells.background, cursorWide: block != nil && cells.cursorWide)
+                                bgColor: background, cursorWide: block != nil && cells.cursorWide)
         slot.uniforms.contents().copyMemory(from: &uniforms, byteCount: MemoryLayout<Uniforms>.size)
 
         guard let drawable = next() else { return false }

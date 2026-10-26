@@ -1,7 +1,7 @@
 import AppKit
 import Terminal
 
-/// The app's lifecycle, Closing nmux and the action dispatch. The Sessions live in the mirror, the colours and the font
+/// The app's lifecycle, Closing nmux and the action dispatch. The Sessions live in the mirror, the Config and the Theme
 /// in the appearance, and the prompts in `AppDelegate+Prompts.swift`.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow?
@@ -10,12 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var bar: SessionBar?
     let keepAwake = KeepAwake()
     let mirror = SessionMirror()
-    let appearance = Appearance()
+    let appearance = Appearance(.current)
 #if NMUX_SELFTEST
     var vtSelfTest: VTSelfTest?
 #endif
     var card: CardView?
-    /// The font every terminal draws with, at the window's backing scale, and the one of each scale the window has had.
+    /// The font every terminal draws with, at the window's backing scale, and the one of each scale the window has had,
+    /// all of the Config's face; a new face starts the list again.
     var font: Font?
     var fonts: [Double: Font] = [:]
     /// The GPU state every terminal shares, made with the first from the shader library `make` puts in the app's
@@ -51,11 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.bar = bar
         mirror.delegate = self
         appearance.host = self
-        // The colours and the font go in before the window shows, so its first frame never flashes another background.
-        appearance.loadTheme()
-        appearance.apply()
-        let font = appearance.makeFont(scale: window.backingScaleFactor)
-        (self.font, fonts) = (font, [font.scale: font])
+        // The Config and the Theme go in before the window shows, so its first frame never flashes another background.
+        loadConfig("launch")
         // The frame goes in before the window shows, so it never appears at another size first.
         window.setFrame(frame, display: false)
         window.makeKeyAndOrderFront(nil)
@@ -65,11 +63,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // limitation: each step of a live resize rebuilds every pill; lay out the old ones instead once that stutters.
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window,
                                                queue: .main) { _ in
-            MainActor.assumeIsolated { self.updateBar() }
+            MainActor.assumeIsolated {
+                self.updateBar()
+                // The card's lines are cut to the window's width again.
+                if self.configCardShows { self.showConfigProblems() }
+            }
+        }
+        // AppKit drops the window's blur when it changes screens.
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: window,
+                                               queue: .main) { _ in
+            MainActor.assumeIsolated { self.appearance.syncWindowBackground() }
         }
         updateBar()
         appearance.follow(window)
         attach(window)
+    }
+
+    /// Reads the Config at launch and on Reload Config; skipped lines show on their card after the apply, and a load
+    /// that skips none closes the card a load before left open.
+    func loadConfig(_ cause: String) {
+        appearance.load(cause)
+        if appearance.problems == nil, configCardShows { answered(false) }
+        showConfigProblems()
     }
 
     /// The attach runs at the window snapped to whole cells of the font, so tmux never reflows the panes at launch. The
@@ -158,10 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     + " active \(id)")
         selfTestLog("title \(window?.title ?? "")")
         updateBar()
+        showConfigProblems()
     }
 
-    /// The one update of the Session bar, for every change of the Sessions and each window resize; it logs the gap
-    /// between the window's top and the shown terminal.
+    /// The one update of the Session bar, for every change of the Sessions, each window resize and each Config reload;
+    /// it logs the gap between the window's top and the shown terminal.
     func updateBar() {
         guard let bar else { return }
         bar.update(sessions, active: mirror.active, draft: draft)
@@ -205,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         selfTestLog("answer \(kill ? "kill" : "cancel")")
         window?.makeFirstResponder(terminal)
         if kill { mirror.kill(session) } else { updateBar() }
+        showConfigProblems()
     }
 
     /// A BEL in a Session: one that is not shown takes the Bell mark, and while nmux is behind another app the Dock
@@ -234,9 +251,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Cmd+Shift+W, Cmd+Q, the close button and the Dock's Quit ask on the closing card, the box unticked, its default
-    /// Close; a close while any prompt is open does nothing, and one over a card that asks nothing quits at once.
+    /// Close; a close while any prompt is open does nothing, one over the Config's card takes its place, and one over a
+    /// card that asks nothing quits at once.
     func closeNmux() {
         guard !leaving, mirror.asking == nil else { return }
+        if configCardShows {
+            card?.removeFromSuperview()
+            card = nil
+        }
         if cardOnlyReports { return quit() }
         guard card == nil else { return }
         drafted(.cancel)
@@ -283,8 +305,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// An app shortcut, from the menu or the view.
     func perform(_ action: AppAction) {
         selfTestLog("shortcut \(action.name)")
-        // A pill that asks, or the closing card, takes every key, its own shortcut among them.
-        if mirror.asking != nil || closingCardShows { return }
+        // A pill that asks, or the closing card, takes every key, its own shortcut among them; Reload Config applies
+        // under it and leaves it open.
+        if mirror.asking != nil || closingCardShows, action != .reloadConfig { return }
         // A card's keys wait for it, and the menu's Paste and Clear reach the terminal past its focus, and New
         // Session's field would take the focus from it.
         if card != nil, [.paste, .clear, .newSession].contains(action) { return }
@@ -303,6 +326,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .selectAll: terminal?.selectAll()
         case .newSession: drafted(.open)
         case .closeSession: if let active = mirror.active { close(active) }
+        case .openConfig: openConfig()
+        case .reloadConfig: loadConfig("reload")
         case .session(let n): move(.number(n))
         case .lastSession: move(.last)
         case .previousSession: move(.previous)
@@ -328,6 +353,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func clear() {
         guard let control = mirror.control, let session = mirror.active, let host = terminal?.host else { return }
         control.send("clear-history -t '\(session)'") { _, _ in host.send([0x0C]) }
+    }
+
+    /// Opens the Config in the default text editor, as Ghostty's `open -t`, created empty with its folder when it is
+    /// missing. The self-test opens no editor, and touches a Config only in an XDG_CONFIG_HOME of its own.
+    func openConfig() {
+#if NMUX_SELFTEST
+        if !appearance.location.fromXDG { return }
+#endif
+        let url = URL(fileURLWithPath: appearance.location.config)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+#if NMUX_SELFTEST
+        selfTestLog("open-config \(url.path)")
+#else
+        guard let editor = NSWorkspace.shared.urlForApplication(toOpen: .plainText) else { return }
+        NSWorkspace.shared.open([url], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
+#endif
     }
 
     /// A quit during the install ends brew and whatever it started; the control client goes with nmux, and the
@@ -393,7 +438,7 @@ extension AppDelegate: SessionMirrorDelegate {
             vtSelfTest = VTSelfTest(view, bar: bar, create: { self.mirror.create($0) }, perform: { self.perform($0) },
                                      rescale: { self.rescale($0) }, card: { self.card }, appearance: { dark in
                                          self.appearance.loadTheme(dark: dark)
-                                         self.appearance.apply()
+                                         self.appearance.apply("appearance")
                                      })
         }
 #endif
@@ -410,5 +455,19 @@ extension AppDelegate: SessionMirrorDelegate {
 extension AppDelegate: AppearanceHost {
     var terminals: [TerminalView] { sessions.map(\.view) }
 
+    func pillWidthChanged(_ width: Double) {
+        bar?.pillWidth = width
+        updateBar()
+    }
+
     func colourField() { bar?.field.colour() }
+
+    /// At launch the attach fits the window to the new face.
+    func faceChanged(_ font: Font) {
+        (self.font, fonts) = (font, [font.scale: font])
+        guard let window, let content, !sessions.isEmpty else { return }
+        for session in sessions { session.view.setFont(font) }
+        snap(window, font: font, top: SessionBar.height)
+        logFit(font, grid: font.grid(in: terminalFrame(content).size))
+    }
 }

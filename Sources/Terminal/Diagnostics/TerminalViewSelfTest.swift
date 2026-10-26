@@ -79,6 +79,21 @@ extension TerminalView {
         resume()
     }
 
+    /// Draws one frame and hands `done` the first blank cell's centre as `<rrggbb> <aa>`, the colour with the alpha
+    /// divided out, or `none` when every cell holds something.
+    public func readBackground(_ done: @escaping (String) -> Void) {
+        renderer.readback = { [cells] frame in
+            let cell = cells.font.cell
+            guard let i = cells.blank, let p = frame.bgra(i % cells.cols * cell.width + cell.width / 2,
+                                                          i / cells.cols * cell.height + cell.height / 2)
+            else { return done("none") }
+            let rgb = [p.x, p.y, p.z].map { p.w == 0 ? 0 : min(255, (Int($0) * 255 + Int(p.w) / 2) / Int(p.w)) }
+            done(String(format: "%02x%02x%02x %02x", rgb[0], rgb[1], rgb[2], p.w))
+        }
+        redraw = true
+        resume()
+    }
+
     /// The display link never ticks while the window is not visible, as behind a locked screen. The self-test then
     /// steps the same frames, paused alike, from a 60 Hz timer.
     public func stepWhileHidden() {

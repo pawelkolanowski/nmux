@@ -75,9 +75,12 @@ build/logo.icns: assets/logo.svg
 	iconutil -c icns -o $@ build/logo.iconset
 
 $(APP): build/nmux build/nmux.metallib build/logo.icns Resources/Info.plist LICENSE NOTICE vendor/LICENSE-ghostty \
-		$(wildcard Resources/Fonts/*)
+		$(wildcard Resources/Fonts/*) vendor/iTerm2-Color-Schemes/COMMIT vendor/iTerm2-Color-Schemes/LICENSE \
+		Resources/themes/Fuwafuwa\ Sakura
 	rm -rf $@
-	mkdir -p $@/Contents/MacOS $@/Contents/Resources/Licenses $@/Contents/Resources/Fonts
+	mkdir -p $@/Contents/MacOS $@/Contents/Resources/Licenses $@/Contents/Resources/Fonts $@/Contents/Resources/themes
+	# nmux's own themes go last, so one of a bundled name would take its place; the bump replaces the folder and COMMIT.
+	cp vendor/iTerm2-Color-Schemes/ghostty/* Resources/themes/* $@/Contents/Resources/themes/
 	cp Resources/Fonts/*.ttf $@/Contents/Resources/Fonts/
 	cp Resources/Fonts/MapleMono-OFL.txt $@/Contents/Resources/Licenses/maple-mono-OFL
 	cp build/nmux $@/Contents/MacOS/
@@ -87,3 +90,4 @@ $(APP): build/nmux build/nmux.metallib build/logo.icns Resources/Info.plist LICE
 	cp NOTICE $@/Contents/Resources/Licenses/NOTICE
 	cp vendor/LICENSE-ghostty $@/Contents/Resources/Licenses/ghostty-LICENSE
 	cp Resources/Fonts/SymbolsNerdFont-LICENSE.txt $@/Contents/Resources/Licenses/symbols-nerd-font-LICENSE
+	cp vendor/iTerm2-Color-Schemes/LICENSE $@/Contents/Resources/Licenses/iterm2-color-schemes-LICENSE

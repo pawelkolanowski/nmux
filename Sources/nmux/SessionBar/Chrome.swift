@@ -2,15 +2,15 @@ import AppKit
 import Carbon.HIToolbox
 import Terminal
 
-/// The chrome's colours: the theme's foreground, its background, the accent and the red. Every drawn view reads the one
-/// current value, which each apply replaces before it redraws them.
+/// The chrome's colours: the theme's foreground, its background at `background-opacity`, the accent and the red. Every
+/// drawn view reads the one current value, which each apply replaces before it redraws them.
 struct ChromeTheme {
-    static var current = ChromeTheme(Theme(dark: false))
+    static var current = ChromeTheme(Theme(dark: false), opacity: 1)
     let fg, bg, accent, danger: NSColor
 
-    init(_ theme: Theme) {
+    init(_ theme: Theme, opacity: Double) {
         fg = nsColor(theme.foreground)
-        bg = nsColor(theme.background)
+        bg = nsColor(theme.background).withAlphaComponent(opacity)
         accent = nsColor(theme.accent)
         danger = nsColor(theme.red)
     }

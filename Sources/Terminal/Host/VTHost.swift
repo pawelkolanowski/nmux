@@ -218,7 +218,7 @@ public final class VTHost: @unchecked Sendable {
         set(GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette)
     }
 
-    /// The theme's colours, at creation and on a switch of the appearance: a query (OSC 10, 11, 4) gets
+    /// The theme's colours, at creation, on a reload and on a switch of the appearance: a query (OSC 10, 11, 4) gets
     /// them from now on, and a program that set mode 2031 gets the colour scheme report when the appearance changed.
     func setColors(_ colors: TerminalColors) {
         locked { t in

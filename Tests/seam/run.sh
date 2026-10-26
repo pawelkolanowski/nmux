@@ -1,7 +1,7 @@
 #!/bin/sh
 # The app seam: the self-test build, or APP=<path to .app>, checked through its `selftest:` log and its exit.
-# `run.sh 2 3` runs those runs, `run.sh` every run the milestone files hold. Each run starts on a fresh private
-# server.
+# `run.sh 2 3` runs those runs, `run.sh` every run the milestone files hold. Each run starts on a fresh private server
+# and the fallback config.
 set -u
 cd "$(dirname "$0")/../.."
 . Tests/seam/lib.sh

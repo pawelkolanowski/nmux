@@ -5,11 +5,13 @@ import AppKit
 
 /// What an app shortcut does. Its name is the self-test's.
 nonisolated enum AppAction: Hashable, Sendable {
-    case quit, copy, paste, selectAll, clear
+    case openConfig, reloadConfig, quit, copy, paste, selectAll, clear
     case newSession, closeSession, closeNmux, previousSession, nextSession, session(Int), lastSession
 
     var name: String {
         switch self {
+        case .openConfig: "open-config"
+        case .reloadConfig: "reload-config"
         case .quit: "quit"
         case .copy: "copy"
         case .paste: "paste"
@@ -43,6 +45,8 @@ nonisolated struct Shortcut: Sendable {
 /// The fixed table, on Ghostty's pattern; nothing else is bound, so Cmd+=, Cmd+- and Cmd+0 go to the terminal. Cmd+W
 /// keeps the title Close Session although it kills, as the pill asks first.
 nonisolated let shortcuts: [Shortcut] = [
+    Shortcut(menu: .nmux, title: "Open Config", key: ",", flags: .command, action: .openConfig),
+    Shortcut(menu: .nmux, title: "Reload Config", key: ",", flags: [.command, .shift], action: .reloadConfig),
     Shortcut(menu: .nmux, title: "Quit nmux", key: "q", flags: .command, action: .quit),
     Shortcut(menu: .edit, title: "Copy", key: "c", flags: .command, action: .copy),
     Shortcut(menu: .edit, title: "Paste", key: "v", flags: .command, action: .paste),

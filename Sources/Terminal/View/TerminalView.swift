@@ -1,9 +1,9 @@
 import AppKit
 import GhosttyVt
 
-/// The view the terminal's state is drawn into, through nmux's Metal 4 renderer. It owns the VT host, takes its colours
-/// and face from the app, and paces the frames: the display link runs while something changes and pauses when a frame
-/// finds nothing to draw, so a quiet prompt draws no frames.
+/// The view the terminal's state is drawn into, through nmux's Metal 4 renderer. It owns the VT host, takes the theme's
+/// colours, face and opacity from the app, and paces the frames: the display link runs while
+/// something changes and pauses when a frame finds nothing to draw, so a quiet prompt draws no frames.
 @MainActor
 public final class TerminalView: NSView {
     public let host: VTHost
@@ -143,6 +143,17 @@ public final class TerminalView: NSView {
         cells.cursorText = rgba(colors.cursorText)
         cells.restyled = true
         resume()
+    }
+
+    /// `background-opacity`: below 1 the default background draws at that alpha and the layer is not opaque, while a
+    /// cell with a background of its own stays opaque, Ghostty's `background-opacity-cells` false.
+    public var opacity: Double {
+        get { renderer.opacity }
+        set {
+            renderer.opacity = newValue
+            redraw = true
+            resume()
+        }
     }
 
     public override func viewDidMoveToWindow() {

@@ -12,7 +12,8 @@ history19() { $T display -p -t keys "#{history_size}"; }
 run19() {
     $T new-session -d -s keys "/bin/stty raw -echo; exec /bin/cat -v" \; set -t keys status off
     : >"$TMUX_TMPDIR/keys"
-    launch 19 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys" NMUX_SELFTEST_OPTION_AS_ALT=left
+    config "option-as-alt = left"
+    launch 19 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys"
     check "the app attaches" within 10 isAttached
     within 10 logged "probe hold"
     press 0 0 61
@@ -126,7 +127,8 @@ run21() {
 run22() {
     $T new-session -d -s alt "/bin/stty raw -echo; exec /bin/cat -v" \; set -t alt status off
     : >"$TMUX_TMPDIR/keys"
-    launch 22 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys" NMUX_SELFTEST_OPTION_AS_ALT=true
+    config "option-as-alt = true"
+    launch 22 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys"
     check "the app attaches" within 10 isAttached
     within 10 logged "probe hold"
     press 14 80020 c499
@@ -276,9 +278,11 @@ run25() {
     $T new-session -d -s sel "/bin/stty -echo -icanon; /usr/bin/printf 'alpha beta\ngamma\nx->\n-\n'; exec /bin/cat" \
         \; set -t sel status off \; set -t sel mouse on
     : >"$TMUX_TMPDIR/keys"
+    mkdir -p "$XDG_CONFIG_HOME/nmux/themes"
+    printf 'selection-background = #ff0000\nselection-foreground = #00ff00\n' >"$XDG_CONFIG_HOME/nmux/themes/selected"
+    config "theme = selected" "copy-on-select = true"
     launch 25 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys" NMUX_SELFTEST_CELLS="0,1 1,2 2,2 0,3" \
-        NMUX_SELFTEST_FONT=MapleMono-Regular.ttf \
-        NMUX_SELFTEST_COPY_ON_SELECT=true NMUX_SELFTEST_SELECTION_COLORS="ff0000 00ff00"
+        NMUX_SELFTEST_FONT=MapleMono-Regular.ttf
     check "the app attaches" within 10 isAttached
     within 10 logged "probe hold"
     n=$(settles); settled $n
@@ -388,8 +392,8 @@ run27() {
     $T new-session -d -s osc "/bin/cat" \; set -t osc status off \
         \; set -s set-clipboard on \; set -s get-clipboard request
     : >"$TMUX_TMPDIR/keys"
-    launch 27-allow NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys" \
-        NMUX_SELFTEST_CLIPBOARD_READ=allow NMUX_SELFTEST_CLIPBOARD_WRITE=ask
+    config "clipboard-read = allow" "clipboard-write = ask"
+    launch 27-allow NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys"
     check "the app attaches" within 10 isAttached
     within 10 logged "probe hold"
     act26 "pasteboard 6869" pasteboard

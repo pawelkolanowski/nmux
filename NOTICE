@@ -10,5 +10,7 @@ Each entry names the licence, its file in this repository, and its file in that 
   and the Ghostty contributors. vendor/LICENSE-ghostty, in the app as ghostty-LICENSE.
 - Symbols Nerd Font 3.4.0: MIT. Resources/Fonts/SymbolsNerdFont-LICENSE.txt,
   in the app as symbols-nerd-font-LICENSE.
+- The Ghostty themes of iTerm2-Color-Schemes, at the commit in vendor/iTerm2-Color-Schemes/COMMIT:
+  MIT. vendor/iTerm2-Color-Schemes/LICENSE, in the app as iterm2-color-schemes-LICENSE.
 - Maple Mono: SIL Open Font License 1.1. Resources/Fonts/MapleMono-OFL.txt,
   in the app as maple-mono-OFL.

@@ -1,12 +1,26 @@
 import AppKit
 import Terminal
 
-/// The cards: a failed attach's and brew's install, the clipboard's asks and Closing nmux. One card shows at a time,
-/// over the window, and takes the keys while it shows.
+/// The cards: a failed attach's and brew's install, the clipboard's asks, the Config's problems and Closing nmux. One
+/// card shows at a time, over the window, and takes the keys while it shows.
 extension AppDelegate {
     var closingCardShows: Bool { card?.state.kind == .closing }
+    var configCardShows: Bool {
+        if case .configProblems = card?.state.kind { true } else { false }
+    }
     /// A card that asks nothing, a failed attach's or brew's install, which a close quits past.
-    var cardOnlyReports: Bool { card != nil && !closingCardShows && clipboardAnswer == nil }
+    var cardOnlyReports: Bool { card != nil && !closingCardShows && !configCardShows && clipboardAnswer == nil }
+
+    /// The Config's card, once a Session shows and no other prompt is open; one already showing takes the new list.
+    func showConfigProblems() {
+        guard let problems = appearance.problems, card == nil || configCardShows, mirror.asking == nil, let font,
+              mirror.activeSession != nil, let content else { return }
+        // The terminal's face at 12 pt for these lines; the clipboard's excerpt keeps the terminal's size.
+        let face = CTFontCreateCopyWithAttributes(font.primary, 12, nil, nil) as NSFont,
+            room = CardView.textWidth(in: content.bounds.width)
+        showCard(configCard(problems) { textSize($0, [.font: face]).width <= room })
+        card?.excerptFont = face
+    }
 
     /// Every failure shows its card. The brew lookup may wait 2 s on the login shell, so it runs off the main thread,
     /// and only for a failure brew can fix.
@@ -57,6 +71,13 @@ extension AppDelegate {
         case .restart: restart()
         case .install: if let brew { install(brew) }
         case .paste, .allow: answered(true)
+        case .dismiss:
+            appearance.problems = nil
+            answered(false)
+        case .openConfig:
+            appearance.problems = nil
+            answered(false)
+            openConfig()
         case .cancel, .deny:
             if closingCardShows { selfTestLog("answer cancel" + (card?.state.checked == true ? " all" : "")) }
             answered(false)
@@ -86,6 +107,7 @@ extension AppDelegate {
         let answer = clipboardAnswer
         clipboardAnswer = nil
         answer?(yes)
+        showConfigProblems()
     }
 
     /// The lookup, the version check and the attach again, in place; a failure brings the card back.

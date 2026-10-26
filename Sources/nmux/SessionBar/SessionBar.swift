@@ -7,8 +7,8 @@ import Terminal
 final class SessionBar: NSView {
     /// The bar's height; the terminal starts right under it.
     static let height: CGFloat = 30
-    /// Every pill's width.
-    let pillWidth: CGFloat = 136
+    /// `pill-width`, which the next update lays the row out at.
+    var pillWidth = CGFloat(Config().pillWidth)
     let show: (SessionID) -> Void
     let close: (SessionID) -> Void
     /// The New Session field's events go to the draft's owner, which hands the draft back through `update`.

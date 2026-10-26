@@ -1,6 +1,6 @@
 import AppKit
 
-/// One Session's pill in the Session bar, 136 pt wide: its name between the left 28 pt and an equal right margin,
+/// One Session's pill in the Session bar, `pill-width` wide: its name between the left 28 pt and an equal right margin,
 /// the close mark or the Bell mark's dot in that left slot. A click on the shown close mark closes the Session, any
 /// other click shows it. A cut name spills whole over the bar while the pointer rests on the pill. While a close asks
 /// on it, it keeps its size, drops its hover parts and shows the prompt: a wash of the danger colour, the name and a

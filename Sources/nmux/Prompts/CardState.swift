@@ -2,13 +2,13 @@ import Foundation
 
 /// A button on a card. The self-test presses one by this name.
 nonisolated enum CardAction: String, Sendable {
-    case quit, restart, install, cancel, paste, deny, allow, close
+    case quit, restart, install, cancel, paste, deny, allow, close, dismiss, openConfig
 }
 
-/// Which card it is: a failed attach's, brew's install, a clipboard ask or Closing nmux.
+/// Which card it is: a failed attach's, brew's install, a clipboard ask, Closing nmux or the Config's problems.
 nonisolated enum CardKind: Equatable, Sendable {
     case missing(brew: Bool), tooOld(brew: Bool), server, client, installing, installFailed
-    case paste, read, write, closing
+    case paste, read, write, closing, configProblems(Int)
 
     /// The name the self-test logs it by.
     var name: String {
@@ -23,6 +23,7 @@ nonisolated enum CardKind: Equatable, Sendable {
         case .read: "read"
         case .write: "write"
         case .closing: "closing"
+        case .configProblems(let count): "config-problems \(count)"
         }
     }
 }
@@ -46,13 +47,14 @@ nonisolated struct CardState: Equatable, Sendable {
     var name: String { kind.name }
     var defaultAction: CardAction? { preferred ?? actions.last }
     /// What Escape presses; a click outside the panel presses it too, unless it quits.
-    var escape: CardAction? { actions.first { [.cancel, .deny, .quit].contains($0) } }
+    var escape: CardAction? { actions.first { [.cancel, .deny, .quit, .dismiss].contains($0) } }
 
     /// What a button reads now, and every label it may read, so its width never changes. Close reads `Kill All` while
     /// the box is ticked.
     func label(_ action: CardAction) -> String {
         switch action {
         case .close where checked: "Kill All"
+        case .openConfig: "Open Config"
         default: action.rawValue.capitalized
         }
     }

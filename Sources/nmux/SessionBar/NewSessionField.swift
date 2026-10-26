@@ -1,6 +1,6 @@
 import AppKit
 
-/// The New Session field in the plus's place, a pill wide: the active pill's wash in the accent at 10% behind a
+/// The New Session field in the plus's place, `pill-width` wide: the active pill's wash in the accent at 10% behind a
 /// borderless text field, its name centred and semibold, red with tmux's error in a tip under it after a refusal.
 /// Return submits, Escape cancels, and focus leaving it cancels too.
 final class NewSessionField: NSView, NSTextFieldDelegate {

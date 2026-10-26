@@ -7,8 +7,9 @@ cd "$(dirname "$0")/../.."
 BIN=${RELEASE:-build/nmux.app}/Contents/MacOS/nmux
 # The release app uses tmux's default socket name, which this short TMUX_TMPDIR makes private.
 export TMUX_TMPDIR="$HOME/.cache/nt-smoke-$$"
+export XDG_CONFIG_HOME="$TMUX_TMPDIR/config"
 T="env -u TMUX TMUX_TMPDIR=$TMUX_TMPDIR tmux"
-mkdir -p "$TMUX_TMPDIR" build/seam
+mkdir -p "$XDG_CONFIG_HOME" build/seam
 # The smoke starts the server with no config, so the contributor's own ~/.tmux.conf never steers it.
 $T -f /dev/null start-server \; set -s exit-empty off
 

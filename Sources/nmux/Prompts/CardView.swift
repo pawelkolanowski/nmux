@@ -78,8 +78,9 @@ final class CardView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    /// A card that fits its content, in a view `width` wide.
+    /// A card that fits its content, in a view `width` wide, and the width its text takes.
     static func width(in width: CGFloat) -> CGFloat { min(520, width - 32) }
+    static func textWidth(in width: CGFloat) -> CGFloat { Self.width(in: width) - 2 * 24 }
 
     private struct Layout {
         var panel = NSRect.zero, title = NSRect.zero, detail = NSRect.zero, excerpt = NSRect.zero

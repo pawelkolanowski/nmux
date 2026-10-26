@@ -4,6 +4,18 @@ import Foundation
 nonisolated let closingCard = CardState(kind: .closing, title: "Close nmux?", actions: [.cancel, .close],
                                         checkbox: "Kill all Sessions")
 
+/// The Config's card: one line per skipped line, each cut in the middle to `fits`, at most 8 and then how many more.
+/// Its kind carries the count, as the self-test logs it. Open Config is the default.
+nonisolated func configCard(_ problems: [ConfigProblem], fits: (String) -> Bool) -> CardState {
+    let shown = min(problems.count, 8)
+    let lines = problems.prefix(shown).map {
+        cutName("line \($0.line)\($0.text.isEmpty ? "" : "  " + $0.text): \($0.reason)", fits: fits)
+    } + (problems.count > shown ? ["and \(problems.count - shown) more"] : [])
+    return CardState(kind: .configProblems(problems.count),
+                     title: "Config has \(problems.count) problem\(problems.count == 1 ? "" : "s")",
+                     excerpt: lines.joined(separator: "\n"), actions: [.dismiss, .openConfig])
+}
+
 /// What a card offers when nothing nmux can run fixes the problem.
 nonisolated let quitRestart: [CardAction] = [.quit, .restart]
 
