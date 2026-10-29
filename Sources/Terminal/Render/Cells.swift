@@ -67,6 +67,8 @@ final class Cells {
     private(set) var cursorBlinking = false
     private(set) var background = SIMD4<UInt8>(255, 255, 255, 255)
     private(set) var foreground = SIMD4<UInt8>(0, 0, 0, 255)
+    /// The kitty images: their draw list and the pixels the renderer has yet to upload.
+    let images = Images()
     /// Set by the view; a change rebuilds only the cursor.
     var focused = true { didSet { if focused != oldValue { cursorChanged = true } } }
     var blinkVisible = true { didSet { if blinkVisible != oldValue { cursorChanged = true } } }
@@ -246,8 +248,12 @@ final class Cells {
     /// Takes the terminal's changes and rebuilds what is dirty. False when nothing changed. Nothing may read the
     /// state before `end_update`, which runs outside the host's lock.
     func update(_ host: VTHost) -> Bool {
-        _ = host.locked { ghostty_render_state_begin_update(state, $0) }
+        _ = host.locked { t in
+            images.tick(t)
+            return ghostty_render_state_begin_update(state, t)
+        }
         ghostty_render_state_end_update(state)
+        let imagesRead = images.update(state, host)
 
         var dirty = GHOSTTY_RENDER_STATE_DIRTY_FALSE
         ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty)
@@ -259,7 +265,7 @@ final class Cells {
                                 style: cur.visual_style, visible: cur.visible, blinking: cur.blinking,
                                 background: rgba(colors.background), foreground: rgba(colors.foreground))
         guard dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE || cursorChanged || preeditChanged || !linkRows.isEmpty
-                || built != builtCursor || restyled
+                || built != builtCursor || restyled || imagesRead
         else { return false }
         // The default colours reach every cell that has none of its own, and selected cells.
         var full = dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL || restyled
@@ -354,7 +360,8 @@ final class Cells {
                                                            $0.baseAddress)
                 }
             }
-            let cluster = Cluster(graphemes[..<Int(len)])
+            // A kitty image placeholder draws no text, as in Ghostty: its image is drawn over the cell.
+            let cluster = len > 0 && graphemes[0] == 0x10EEEE ? [] : Cluster(graphemes[..<Int(len)])
             let selected = selection[y]?.contains(wide == GHOSTTY_CELL_WIDE_SPACER_TAIL ? x - 1 : x) == true
             let cellBg = selected ? selectionBackground ?? foreground
                 : style.inverse != isCovering(cluster.first) ? fg : ownBg

@@ -4,7 +4,8 @@ import Testing
 @testable import Terminal
 
 private let old = AttachFailure.tooOld(path: "/usr/bin/tmux", version: "3.2a")
-private let missingBrew = cardState(.missing, brew: true), missingNoBrew = cardState(.missing, brew: false)
+private let missingBrew = cardState(.missing(path: nil), brew: true)
+private let missingNoBrew = cardState(.missing(path: nil), brew: false)
 
 struct CardStateTests {
     @Test("a card's kind gives the name the self-test logs", arguments: [
@@ -22,6 +23,14 @@ struct CardStateTests {
 
     @Test("missing tmux says nmux needs tmux") func missingTmuxSaysNmuxNeedsTmux() {
         #expect(missingBrew.title == "nmux needs tmux.")
+    }
+
+    @Test("a tmux-path that is not executable is named on the card, with no Install")
+    func aTmuxPathThatIsNotExecutable() {
+        let card = cardState(.missing(path: "/x/tmux"), brew: true)
+        #expect(card.title == "nmux needs tmux at /x/tmux.")
+        #expect(card.actions == [.quit, .restart])
+        #expect(brewArguments(.missing(path: "/x/tmux")) == nil)
     }
 
     @Test("missing tmux without brew offers no Install") func missingTmuxWithoutBrewOffersNoInstall() {
@@ -66,7 +75,7 @@ struct CardStateTests {
     }
 
     @Test("Install installs a missing tmux") func installInstallsAMissingTmux() {
-        #expect(brewArguments(.missing) == ["install", "tmux"])
+        #expect(brewArguments(.missing(path: nil)) == ["install", "tmux"])
     }
 
     @Test("Install installs over an old tmux too") func installInstallsOverAnOldTmuxToo() {

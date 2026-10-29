@@ -5,9 +5,12 @@ key37b() { echo "$1" >>"$TMUX_TMPDIR/keys37-bad"; }
 count37() { grep -c "^selftest: $1$" "$LOG"; }
 problems37() { grep -c "^selftest: config-problem " "$LOG"; }
 allDefaults37() {
-    within 10 logged "config clipboard-read=ask" \
+    within 10 logged "config image-storage-limit=320000000" \
         && [ "$(sed -n "s/^selftest: config //p" "$LOG" | tr "\n" " ")" = "$defaults37" ]
 }
+command37="set -g mouse on ; set -g set-clipboard on ; set -g allow-passthrough on"
+# options37 <option>...: each option's global value on the run's server, one line.
+options37() { for o in "$@"; do $T show -gv "$o"; done | tr "\n" " "; }
 emptyFile37() { within 3 logged "open-config $cfg" && [ -f "$cfg" ] && [ ! -s "$cfg" ]; }
 oneProblem37() { logged "config-problem 2 unknown key" && [ "$(problems37)" -eq 1 ]; }
 carded37() { within 10 logged "card config-problems 1" && logged "pills a*"; }
@@ -27,18 +30,24 @@ run37() {
     launch 37 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys37"
     defaults37="theme=Fuwafuwa Sakura font-family=SF Mono font-size=14 font-thicken=false option-as-alt=false"
     defaults37="$defaults37 pill-width=136 background-opacity=1 background-blur=0 copy-on-select=false"
-    defaults37="$defaults37 clipboard-write=allow clipboard-read=ask "
+    defaults37="$defaults37 clipboard-write=allow clipboard-read=ask tmux-path= tmux-command=$command37"
+    defaults37="$defaults37 image-storage-limit=320000000 "
     check "no file logs every default, in order" allDefaults37
     within 10 logged "pills a*"
+    check "the default tmux-command turns mouse, set-clipboard and passthrough on" \
+        is "on on on " options37 mouse set-clipboard allow-passthrough
     check "and shows no card" not grep -q "^selftest: card " "$LOG"
     key37 "goto open-config"
     check "Cmd+, on a missing file leaves an empty file in a new folder" emptyFile37
     kill "$PID"
     ended
-    printf 'pill-width = 200\nfont-szie = 16\n' >"$cfg"
+    printf 'pill-width = 200\nfont-szie = 16\ntmux-command = set -g status off\n' >"$cfg"
+    $T set -g allow-passthrough off
     : >"$TMUX_TMPDIR/keys37-bad"
     launch 37-bad NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys37-bad"
     check "a good line applies" within 10 logged "config pill-width=200"
+    check "a set tmux-command replaces the default whole" \
+        within 10 is "off off " options37 allow-passthrough status
     check "a misspelt key is one problem, with its line" oneProblem37
     check "and shows on the card once the Session shows" carded37
     printf 'pill-width = 200\n' >"$cfg"
@@ -148,7 +157,7 @@ run39() {
     printf 'theme = Fuwafuwa Sakura\n' >"$cfg39"
     : >"$TMUX_TMPDIR/keys39"
     launch 39 NMUX_SELFTEST_KEYS="$TMUX_TMPDIR/keys39"
-    check "launch applies everything" within 10 logged "apply launch colours face opacity pills input"
+    check "launch applies everything" within 10 logged "apply launch colours face opacity pills input images"
     check "before the first Session" beforeFirst39
     within 10 logged "probe hold"
     check "the first frame's background is Fuwafuwa Sakura's" is "fbdfef ff" drawback39

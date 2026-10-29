@@ -1,9 +1,10 @@
 import Foundation
 import Terminal
 
-/// nmux's own small Config, not Ghostty's, since the terminal passes every key on: eleven keys in Ghostty's
+/// nmux's own small Config, not Ghostty's, since the terminal passes every key on: fourteen keys in Ghostty's
 /// `key = value` syntax, every one with its default. `font-family` keeps its text; the face falls back to SF Mono where
-/// it is made. `theme` keeps its text for the lookup.
+/// it is made. `theme` keeps its text for the lookup. An empty `tmux-path` means
+/// "look tmux up"; `tmux-command` goes to tmux's own parser whole.
 nonisolated struct Config: Equatable, Sendable {
     var theme = "Fuwafuwa Sakura"
     var fontFamily = "SF Mono"
@@ -16,6 +17,10 @@ nonisolated struct Config: Equatable, Sendable {
     var copyOnSelect = false
     var clipboardWrite = ClipboardAccess.allow
     var clipboardRead = ClipboardAccess.ask
+    var tmuxPath = ""
+    var tmuxCommand = "set -g mouse on ; set -g set-clipboard on ; set -g allow-passthrough on"
+    /// Bytes per screen, Ghostty's `u32`; 0 turns kitty images off.
+    var imageStorageLimit = VTHost.defaultImageStorageLimit
 }
 
 /// A line nmux skipped: its number from 1, its trimmed text and why. A file that is not UTF-8 is one problem on line 0.
@@ -142,4 +147,8 @@ nonisolated private let configKeys: [ConfigKey] = [
         parse: ClipboardAccess.init),
     key("clipboard-read", \.clipboardRead, "expects one of allow, deny, ask", show: \.rawValue,
         parse: ClipboardAccess.init),
+    key("tmux-path", \.tmuxPath, "", show: { $0 }, parse: { $0 }),
+    key("tmux-command", \.tmuxCommand, "", show: { $0 }, parse: { $0 }),
+    key("image-storage-limit", \.imageStorageLimit, "expects a number of bytes from 0 to 4294967295",
+        show: { "\($0)" }, parse: { UInt32($0) }),
 ]

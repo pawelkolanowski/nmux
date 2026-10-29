@@ -10,11 +10,11 @@ nonisolated struct Tmux {
     let base: [String] = []
 #endif
 
-    /// The login shell's tmux first, within 2 s, then the known paths; tmux 3.4 or newer.
-    static func lookUp() throws(AttachFailure) -> (tmux: Tmux, version: String) {
-        let found = pickExecutable(loginAnswer: loginShellPath(of: "tmux"), known: knownPaths(knownTmuxPaths),
-                                   isExecutable: isExecutableFile)
-        guard let path = found else { throw .missing }
+    /// The Config's `tmux-path`, or with none the login shell's tmux first, within 2 s, then the known paths; tmux 3.4
+    /// or newer.
+    static func lookUp(_ configured: String) throws(AttachFailure) -> (tmux: Tmux, version: String) {
+        let path = try tmuxPath(configured, loginAnswer: { loginShellPath(of: "tmux") },
+                                known: knownPaths(knownTmuxPaths), isExecutable: isExecutableFile)
         let tmux = Tmux(path: path)
         let version = tmuxVersion(tmux.run(["-V"]).out.trimmingCharacters(in: .whitespacesAndNewlines))
         guard tmuxIsNewEnough(version) else { throw .tooOld(path: path, version: version) }
@@ -34,10 +34,17 @@ nonisolated struct Tmux {
         return id
     }
 
-    func run(_ args: [String]) -> (status: Int32, out: String, err: String) {
-        let out = Pipe(), err = Pipe()
-        let p = makeProcess(path, base + args, output: out, error: err)
+    /// tmux with `args`, and `input` on its stdin when given.
+    func run(_ args: [String], input: String? = nil) -> (status: Int32, out: String, err: String) {
+        let out = Pipe(), err = Pipe(), stdin = Pipe()
+        let p = makeProcess(path, base + args, input: input == nil ? FileHandle.nullDevice : stdin, output: out,
+                            error: err)
         do { try p.run() } catch { return (-1, "", "\(error)") }
+        if let input {
+            // shortcut: written before the drains, so it fits the 64 KB pipe buffer; write on a thread if input grows.
+            try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+            try? stdin.fileHandleForWriting.close()
+        }
         // stderr drains on its own thread, so neither pipe fills up while nmux reads the other.
         nonisolated(unsafe) var e = Data()
         let drained = DispatchSemaphore(value: 0)
@@ -52,16 +59,29 @@ nonisolated struct Tmux {
     }
 }
 
+/// The Config's `tmux-path` as it is when set, else the login shell's answer, then the known paths. `missing` carries
+/// the set path, or nil when the lookup found none.
+nonisolated func tmuxPath(_ configured: String, loginAnswer: () -> String?, known: [String],
+                          isExecutable: (String) -> Bool) throws(AttachFailure) -> String {
+    if !configured.isEmpty {
+        guard isExecutable(configured) else { throw .missing(path: configured) }
+        return configured
+    }
+    guard let found = pickExecutable(loginAnswer: loginAnswer(), known: known, isExecutable: isExecutable)
+    else { throw .missing(path: nil) }
+    return found
+}
+
 /// A step of the attach that failed; each one shows its card.
 nonisolated enum AttachFailure: Error {
-    case missing
+    case missing(path: String?)
     case tooOld(path: String, version: String)
     case server(String)
     case client(String)
 
     var log: String {
         switch self {
-        case .missing: "missing"
+        case let .missing(path): path.map { "missing \($0)" } ?? "missing"
         case let .tooOld(path, version): "too-old \(path) \(version)"
         case let .server(detail): "server \(detail)"
         case let .client(detail): "client \(detail)"

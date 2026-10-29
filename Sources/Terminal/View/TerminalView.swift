@@ -79,8 +79,16 @@ public final class TerminalView: NSView {
     private let waker: Waker
     /// Wakes the paused frames once a hold no output ends has run its 1 s.
     private var holdEnd: Timer?
+    /// Wakes the paused frames when a playing kitty animation's next frame is due, at `animationDue` ms.
+    private var animationFrame: Timer?
+    private var animationDue: UInt64?
     /// Draws the next frame though the terminal did not change.
     var redraw = false
+#if NMUX_SELFTEST
+    /// Draws the next frame for the self-test's pixel readback alone; the observer never hears of it, so the readbacks
+    /// never chain and a settle the seam waits for is always a change's.
+    var pixelRedraw = false
+#endif
     /// Runs only while the terminal asks for a blinking cursor and the window is key.
     private var blink: Timer?
     /// A window snap waits for the next turn of the main loop.
@@ -346,15 +354,39 @@ public final class TerminalView: NSView {
             }
             return
         }
-        guard cells.update(host) || redraw else {
+        let changed = cells.update(host)
+        // The same frame asked for again keeps its timer.
+        if cells.images.animation?.next != animationDue {
+            animationFrame?.invalidate()
+            animationDue = cells.images.animation?.next
+            animationFrame = cells.images.animation.map { tick in
+                Timer.scheduledTimer(withTimeInterval: animationDelay(now: tick.now, next: tick.next),
+                                     repeats: false) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.animationDue = nil
+                        self?.resume()
+                    }
+                }
+            }
+        }
+#if NMUX_SELFTEST
+        let counted = changed || redraw
+        guard counted || pixelRedraw else {
             link?.isPaused = true
             return
         }
+        pixelRedraw = false
+#else
+        guard changed || redraw else {
+            link?.isPaused = true
+            return
+        }
+#endif
         // A frame the GPU could not encode is drawn again on the next tick.
         redraw = !renderer.draw(cells) { renderer.layer.nextDrawable() }
         syncBlink()
 #if NMUX_SELFTEST
-        observer?.framed()
+        if counted { observer?.framed() }
 #endif
     }
 

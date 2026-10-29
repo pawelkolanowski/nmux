@@ -31,6 +31,9 @@ public final class VTHost: @unchecked Sendable {
 
     private let handlers: Handlers
 
+    /// Ghostty's `image-storage-limit`, 320 MB per screen, which a new terminal starts with.
+    public static let defaultImageStorageLimit: UInt32 = 320_000_000
+
     /// The lock guards the terminal and every field below it that the callbacks touch.
     private let lock = NSLock()
     private let terminal: GhosttyTerminal
@@ -72,6 +75,7 @@ public final class VTHost: @unchecked Sendable {
         (self.argv, self.handlers) = (argv, handlers)
         size = GhosttySizeReportSize(rows: UInt16(grid.rows), columns: UInt16(grid.cols),
                                      cell_width: UInt32(cell.width), cell_height: UInt32(cell.height))
+        precondition(pngDecoderInstalled, "libghostty-vt refused the PNG decoder")
         var made: GhosttyTerminal?
         guard ghostty_terminal_new(nil, &made, size.columns, size.rows) == GHOSTTY_SUCCESS, let made else {
             throw .terminal
@@ -186,6 +190,17 @@ public final class VTHost: @unchecked Sendable {
         set(GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, unsafeBitCast(attributes, to: UnsafeRawPointer.self))
         set(GHOSTTY_TERMINAL_OPT_RENDER_HOLD, unsafeBitCast(hold, to: UnsafeRawPointer.self))
+        // Ghostty's kitty images: every medium, temporary files only from the temp directory, and its 320 MB per
+        // screen, never the library's 10 MB.
+        var on = true
+        set(GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &on)
+        set(GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &on)
+        Array(tempDirectory().utf8).withUnsafeBufferPointer { p in // the terminal copies the path
+            var path = GhosttyString(ptr: p.baseAddress, len: p.count)
+            set(GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &path)
+        }
+        var limit = UInt64(Self.defaultImageStorageLimit)
+        set(GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &limit)
         // tmux holds the history.
         var noScrollback = 0
         set(GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &noScrollback)
@@ -232,6 +247,12 @@ public final class VTHost: @unchecked Sendable {
                 replies += buf[..<n].map { UInt8(bitPattern: $0) }
             }
         }
+    }
+
+    /// The bytes each screen's kitty images may take, `image-storage-limit`; 0 deletes them all and takes no more.
+    public func setImageStorageLimit(_ bytes: UInt32) {
+        var bytes = UInt64(bytes)
+        _ = locked { ghostty_terminal_set($0, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &bytes) }
     }
 
     /// The window gaining or losing key, reported to the client when it set mode 1004.
@@ -371,9 +392,9 @@ public final class VTHost: @unchecked Sendable {
         return gridChanged
     }
 
-#if NMUX_SELFTEST
-    /// Parses `bytes` as if the client wrote them and returns the replies instead of sending them: the
-    /// self-test's view of how queries are answered.
+#if NMUX_SELFTEST || DEBUG
+    /// Parses `bytes` as if the client wrote them and returns the replies instead of sending them: the self-test's and
+    /// the tests' view of how queries are answered. Debug builds carry it for `swift test`; the release app does not.
     public func probe(_ bytes: [UInt8]) -> [UInt8] {
         lock.lock()
         defer { lock.unlock() }
@@ -412,6 +433,12 @@ func keepTail(_ tail: inout [UInt8], _ read: ArraySlice<UInt8>, limit: Int = 409
     if read.count >= limit { return tail = Array(read.suffix(limit)) }
     tail.append(contentsOf: read)
     if tail.count > limit { tail.removeFirst(tail.count - limit) }
+}
+
+/// Ghostty's `tmpDirPath`: `$TMPDIR`, else `$TMP`, else `/tmp`, without its trailing separator.
+func tempDirectory(_ env: [String: String] = ProcessInfo.processInfo.environment) -> String {
+    let dir = [env["TMPDIR"], env["TMP"]].lazy.compactMap { $0 }.first { !$0.isEmpty } ?? "/tmp"
+    return dir.count > 1 && dir.hasSuffix("/") ? String(dir.dropLast()) : dir
 }
 
 /// The pty's size: the grid in cells, and in pixels of the cell.

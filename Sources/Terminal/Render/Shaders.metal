@@ -1,7 +1,8 @@
-// nmux's three pipelines: the background, the cell backgrounds and the text, instanced per glyph. Adapted from
-// Ghostty's `src/renderer/shaders/shaders.metal` at commit 22f100c6, with its `Uniforms` and `CellText` layouts.
-// nmux draws into an sRGB layer and blends as macOS does, so a colour passes as it is: the Display P3 conversion,
-// linear blending, minimum contrast and the images are left out, as nothing nmux draws needs them.
+// nmux's four pipelines: the background, the cell backgrounds, the text, instanced per glyph, and the kitty images,
+// one draw per placement. Adapted from Ghostty's `src/renderer/shaders/shaders.metal` at commit 22f100c6, with its
+// `Uniforms`, `CellText` and `Image` layouts. nmux draws into an sRGB layer and blends as macOS does, so a colour passes
+// as it is: the Display P3 conversion, linear blending and minimum contrast are left out, as nothing nmux draws needs
+// them.
 // Ghostty: MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors; see vendor/LICENSE-ghostty.
 #include <metal_stdlib>
 
@@ -154,4 +155,48 @@ fragment float4 cell_text_fragment(
       return color;
     }
   }
+}
+
+// Ghostty's `Image`: one placement, in pixels of the terminal's cell. The source rectangle is packed, so the struct
+// takes 40 bytes, as Ghostty's vertex attributes do.
+struct Image {
+  float2 grid_pos;
+  float2 cell_offset;
+  packed_float4 source_rect;
+  float2 dest_size;
+};
+
+struct ImageVertexOut {
+  float4 position [[position]];
+  float2 tex_coord;
+};
+
+// A quad per placement from a triangle strip, corners as `cell_text_vertex`'s; the draw's base instance picks it.
+vertex ImageVertexOut image_vertex(
+  uint vid [[vertex_id]],
+  uint iid [[instance_id]],
+  device const Image *images [[buffer(3)]],
+  constant Uniforms& uniforms [[buffer(1)]]
+) {
+  Image in = images[iid];
+  float2 corner = float2(float(vid == 1 || vid == 3), float(vid == 2 || vid == 3));
+  float4 source = float4(in.source_rect);
+
+  ImageVertexOut out;
+  // In pixels, as the sampler addresses the image.
+  out.tex_coord = source.xy + source.zw * corner;
+  float2 image_pos = uniforms.cell_size * in.grid_pos + in.cell_offset + in.dest_size * corner;
+  out.position = uniforms.projection_matrix * float4(image_pos.x, image_pos.y, 0.0f, 1.0f);
+  return out;
+}
+
+// The sRGB texture hands the pixel back linear; it is encoded again, then premultiplied.
+fragment float4 image_fragment(
+  ImageVertexOut in [[stage_in]],
+  texture2d<float> image [[texture(2)]]
+) {
+  constexpr sampler textureSampler(coord::pixel, address::clamp_to_edge, filter::linear);
+  float4 rgba = unlinearize(image.sample(textureSampler, in.tex_coord));
+  rgba.rgb *= rgba.a;
+  return rgba;
 }

@@ -444,6 +444,9 @@ final class VTSelfTest: TerminalViewObserver {
             for (x, y) in self.named {
                 if let cell = self.view.describeCell(x, y) { selfTestLog("cell \(x),\(y) \(cell)") }
             }
+            if !self.named.isEmpty {
+                self.view.readPixels(self.named) { $0.forEach { selfTestLog("pixel \($0)") } }
+            }
             selfTestLog("shaped \(self.view.rowsShaped)")
             selfTestLog("cursor \(self.view.describeCursor())")
             let selection = self.view.describeSelection()

@@ -101,15 +101,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         + "\(font.face(for: cp).map { $0.sprite ? "sprite" : family($0.font) } ?? "none")")
         }
 #endif
+        // The Config in force now; a later Reload Config leaves this attach alone.
+        let config = appearance.config
         DispatchQueue.global().async {
             do throws(AttachFailure) {
-                let (tmux, version) = try Tmux.lookUp()
+                let (tmux, version) = try Tmux.lookUp(config.tmuxPath)
                 selfTestLog("tmux \(tmux.path) \(version)")
                 let id = try tmux.session(grid)
-                // The mouse and OSC 52 work with any tmux config.
-                let options = tmux.run(["set", "-g", "mouse", "on", ";", "set", "-g", "set-clipboard", "on"])
-                if options.status != 0 {
-                    selfTestLog("options \(options.err.trimmingCharacters(in: .whitespacesAndNewlines))")
+                // Whole, to tmux's own parser, so quotes and `;` mean what they mean in `~/.tmux.conf`.
+                let command = tmux.run(["source-file", "-"], input: config.tmuxCommand)
+                if command.status != 0 {
+                    selfTestLog("options \(command.err.trimmingCharacters(in: .whitespacesAndNewlines))")
                 }
                 onMain {
                     self.launchGrid = grid
@@ -392,11 +394,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 extension AppDelegate: SessionMirrorDelegate {
     func cancelAsking() { answer(false) }
 
-    /// tmux 3.7c sends styled underlines and their colour only to a terminal whose XTVERSION it knows, and it knows
-    /// neither libghostty nor Ghostty; WezTerm's set is the narrowest with them. Only the tmux client sees the reply,
-    /// since tmux answers its panes' XTVERSION itself.
+    /// tmux sends styled underlines and their colour only to a terminal whose XTVERSION it knows; 3.8 knows Ghostty,
+    /// by the prefix `ghostty `, and libghostty-vt draws what Ghostty does. Only the tmux client sees the reply, since
+    /// tmux answers its panes' XTVERSION itself.
     static let xtversion =
-        "WezTerm (nmux \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"))"
+        "ghostty (nmux \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"))"
 
     /// A Session's terminal, on a plain tmux client attached to it from the start, at the window's grid. The client
     /// declares overline and hyperlinks, which xterm-256color's terminfo lacks, or tmux drops SGR 53 and OSC 8 before

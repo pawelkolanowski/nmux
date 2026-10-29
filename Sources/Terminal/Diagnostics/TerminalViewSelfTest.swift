@@ -65,7 +65,7 @@ extension TerminalView {
     public func readBack(ink x: Int, _ y: Int,
                          underline: (underlined: (x: Int, y: Int), plain: (x: Int, y: Int))? = nil,
                          _ done: @escaping (String) -> Void) {
-        renderer.readback = { [cells] frame in
+        renderer.readbacks.append { [cells] frame in
             var verdict = cells.verdict(frame, ink: x, y)
             if let (underlined, plain) = underline {
                 func ok(_ pass: Bool) -> String { pass ? "ok" : "bad" }
@@ -82,15 +82,28 @@ extension TerminalView {
     /// Draws one frame and hands `done` the first blank cell's centre as `<rrggbb> <aa>`, the colour with the alpha
     /// divided out, or `none` when every cell holds something.
     public func readBackground(_ done: @escaping (String) -> Void) {
-        renderer.readback = { [cells] frame in
+        renderer.readbacks.append { [cells] frame in
             let cell = cells.font.cell
             guard let i = cells.blank, let p = frame.bgra(i % cells.cols * cell.width + cell.width / 2,
                                                           i / cells.cols * cell.height + cell.height / 2)
             else { return done("none") }
-            let rgb = [p.x, p.y, p.z].map { p.w == 0 ? 0 : min(255, (Int($0) * 255 + Int(p.w) / 2) / Int(p.w)) }
-            done(String(format: "%02x%02x%02x %02x", rgb[0], rgb[1], rgb[2], p.w))
+            done("\(unpremultiplied(p)) \(String(format: "%02x", p.w))")
         }
         redraw = true
+        resume()
+    }
+
+    /// Draws one frame, which the observer does not hear of, and hands `done` each cell's centre as `<x>,<y>
+    /// <rrggbb>`, the alpha divided out, in the order given; a cell past the frame is left out.
+    public func readPixels(_ at: [(x: Int, y: Int)], _ done: @escaping ([String]) -> Void) {
+        renderer.readbacks.append { [cells] frame in
+            let cell = cells.font.cell
+            done(at.compactMap { c in
+                frame.bgra(c.x * cell.width + cell.width / 2, c.y * cell.height + cell.height / 2)
+                    .map { "\(c.x),\(c.y) \(unpremultiplied($0))" }
+            })
+        }
+        pixelRedraw = true
         resume()
     }
 
@@ -180,3 +193,9 @@ extension Cells {
 
 private func hex(_ c: SIMD4<UInt8>) -> String { String(format: "%02x%02x%02x", c.x, c.y, c.z) }
 #endif
+
+/// A frame's pixel as `rrggbb`, the alpha divided out.
+private func unpremultiplied(_ p: SIMD4<UInt8>) -> String {
+    let rgb = [p.x, p.y, p.z].map { p.w == 0 ? 0 : min(255, (Int($0) * 255 + Int(p.w) / 2) / Int(p.w)) }
+    return String(format: "%02x%02x%02x", rgb[0], rgb[1], rgb[2])
+}

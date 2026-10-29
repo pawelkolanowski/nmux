@@ -30,7 +30,7 @@ run32() {
     key32 "pill 2"
     check "a click on pill 2 shows its Session" shown32
     check "the click lands on the pill" not grep -q "^selftest: pill .* missed$" "$LOG"
-    printf '\a' >"$($T display -p -t c "#{pane_tty}")"
+    printf '\a' >"$($T display -p -t '=c:' "#{pane_tty}")"
     check "a bell in a hidden Session puts the dot on its pill" within 3 is "a b* c!" pills32
     key32 "pill 3"
     check "showing it clears the dot" within 3 is "a b c*" pills32

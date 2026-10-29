@@ -22,10 +22,14 @@ nonisolated let quitRestart: [CardAction] = [.quit, .restart]
 nonisolated let homebrewInstall = #"/bin/bash -c "$(curl -fsSL "#
     + #"https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)""#
 
-/// The card for a failed attach. Install is offered only for a missing or old tmux, and only with brew.
+/// The card for a failed attach. Install is offered only for a missing or old tmux, and only with brew; a `tmux-path`
+/// that is not executable is the Config's to fix.
 nonisolated func cardState(_ failure: AttachFailure, brew: Bool) -> CardState {
     let title: String, kind: (Bool) -> CardKind
     switch failure {
+    case let .missing(path?):
+        return CardState(kind: .missing(brew: false), title: "nmux needs tmux at \(path).",
+                         detail: "Fix tmux-path in the Config, then press Restart.", actions: quitRestart)
     case .missing: (title, kind) = ("nmux needs tmux.", { .missing(brew: $0) })
     case let .tooOld(_, version):
         (title, kind) = ("nmux needs tmux 3.4 or newer; found \(version).", { .tooOld(brew: $0) })
@@ -44,8 +48,8 @@ nonisolated func cardState(_ failure: AttachFailure, brew: Bool) -> CardState {
 /// tmux, and unlike `brew upgrade` it works on an old tmux that brew did not install.
 nonisolated func brewArguments(_ failure: AttachFailure) -> [String]? {
     switch failure {
-    case .missing, .tooOld: ["install", "tmux"]
-    case .server, .client: nil
+    case .missing(nil), .tooOld: ["install", "tmux"]
+    case .missing, .server, .client: nil
     }
 }
 

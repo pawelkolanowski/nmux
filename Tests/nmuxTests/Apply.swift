@@ -46,6 +46,10 @@ struct ApplyTests {
         #expect(redone(line) == [.input])
     }
 
+    @Test("image-storage-limit redoes the images") func imageStorageLimitRedoesTheImages() {
+        #expect(redone("image-storage-limit = 0") == [.images])
+    }
+
     @Test("the theme key alone redoes nothing until its colours differ") func theThemeKeyAloneRedoesNothingUntilIts() {
         #expect(redone("theme = Nord").isEmpty)
     }

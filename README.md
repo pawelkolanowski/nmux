@@ -85,8 +85,21 @@ background-blur = true
 | `copy-on-select` | `true`, `false` | `false` |
 | `clipboard-write` | `allow`, `deny`, `ask` | `allow` |
 | `clipboard-read` | `allow`, `deny`, `ask` | `ask` |
+| `tmux-path` | the path of a tmux binary | the tmux nmux finds |
+| `tmux-command` | any tmux command, or several joined by `;` | see below |
+| `image-storage-limit` | bytes each screen's images may take, from 0 (no images) to 4294967295 | `320000000` |
 
 A family that CoreText cannot find falls back to SF Mono.
+
+nmux runs `tmux-command` at launch, and tmux reads it as a line of `~/.tmux.conf`. The default
+turns on the mouse, the clipboard and passthrough for images:
+
+```
+tmux-command = set -g mouse on ; set -g set-clipboard on ; set -g allow-passthrough on
+```
+
+A command of your own replaces the default whole. Keep `mouse` and `set-clipboard` in it, because
+selection and the clipboard need them.
 
 A Theme is a file in Ghostty's theme format, and nmux reads only its colours. nmux looks a name up
 in this folder first:
@@ -121,7 +134,7 @@ Session bar at the top shows three Sessions. The same setup appears in four Them
   Maple Mono ship inside the app.
 - 861 Ghostty themes from iTerm2-Color-Schemes ship with nmux. A light and dark pair follows the
   Mac's appearance.
-- The Config has eleven keys, in the syntax Ghostty uses.
+- The Config has fourteen keys, in the syntax Ghostty uses.
 - Cmd+T, Cmd+W, Cmd+1 to Cmd+9, Cmd+C and Cmd+V work as in any Mac app. Option types ą and ł,
   unless the Config makes it Alt.
 - Clicks, drags and the scroll wheel go to tmux. A drag with Shift selects text, and Cmd+click opens
@@ -164,7 +177,7 @@ windows and layouts belong to tmux, so nmux has none of its own.
 
 nmux talks to tmux through one control client, which reports every Session created, renamed or
 killed. Each pill has a terminal behind it that runs `tmux attach-session` for its Session. At launch nmux
-turns on tmux's `mouse` and `set-clipboard` options and changes nothing else.
+runs the Config's `tmux-command` and changes nothing else in tmux.
 
 The code is two Swift modules:
 
@@ -185,7 +198,7 @@ These stay out of scope:
 
 - Linux and Windows.
 - Splits, panes and layouts inside the app. tmux owns them.
-- tmux options beyond `mouse` and `set-clipboard`.
+- A Config key for each tmux option. `tmux-command` sets any of them.
 - A settings window.
 - Signing, notarization, auto-update and a Homebrew cask.
 - VoiceOver.

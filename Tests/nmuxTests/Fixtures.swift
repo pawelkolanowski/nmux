@@ -47,3 +47,7 @@ func themeFile(_ path: String) -> Data? { themeData[path] }
 let sakura = Theme(parseTheme((try? String(contentsOfFile: repositoryPath("Resources/themes/Fuwafuwa Sakura"),
                                            encoding: .utf8)) ?? ""),
                    dark: false)
+
+// A 2 × 1 PNG, red `ff0000` left and blue `0000ff` right, RGB with no colour chunk.
+let redBlue = Data(base64Encoded:
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4zwAE/wEHAAH/4iOeWQAAAABJRU5ErkJggg==")!

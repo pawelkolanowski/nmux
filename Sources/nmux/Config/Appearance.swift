@@ -3,7 +3,7 @@ import Terminal
 
 /// What an apply must redo, in the order it redoes them and the self-test logs them.
 nonisolated enum Change: String, CaseIterable {
-    case colours, face, opacity, pills, input
+    case colours, face, opacity, pills, input, images
 }
 
 /// The Config and the colours in force; nil before the first apply, which redoes everything.
@@ -29,6 +29,7 @@ nonisolated func changes(from old: Applied?, to new: Applied) -> [Change] {
     if differs(\.optionAsAlt) || differs(\.copyOnSelect) || differs(\.clipboardWrite) || differs(\.clipboardRead) {
         changed.insert(.input)
     }
+    if differs(\.imageStorageLimit) { changed.insert(.images) }
     return Change.allCases.filter(changed.contains)
 }
 
@@ -116,6 +117,7 @@ final class Appearance {
             case .opacity: for view in host.terminals { view.opacity = config.backgroundOpacity }
             case .pills: host.pillWidthChanged(config.pillWidth)
             case .input: for view in host.terminals { input(view) }
+            case .images: for view in host.terminals { images(view) }
             }
         }
         if redo.contains(.colours) || redo.contains(.opacity) {
@@ -136,6 +138,7 @@ final class Appearance {
         view.setColors(theme.terminal)
         view.opacity = config.backgroundOpacity
         input(view)
+        images(view)
     }
 
     /// As Ghostty's window: below 1 it is not opaque, its background all but clear and blurred by `background-blur`;
@@ -153,6 +156,8 @@ final class Appearance {
         (view.optionAsAlt, view.copyOnSelect) = (config.optionAsAlt, config.copyOnSelect)
         (view.clipboardWrite, view.clipboardRead) = (config.clipboardWrite, config.clipboardRead)
     }
+
+    private func images(_ view: TerminalView) { view.host.setImageStorageLimit(config.imageStorageLimit) }
 
     /// `font-family` at `font-size` points at the backing scale, with `font-thicken`. SF Mono is the system's
     /// monospaced face, which CoreText does not find by name; a family CoreText cannot find falls back to it, logged

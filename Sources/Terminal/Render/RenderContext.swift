@@ -1,19 +1,20 @@
 import Metal
 
 /// The GPU state every terminal shares: the device, the queue, the library `make` compiles from Shaders.metal and the
-/// three pipelines. Each view keeps its own layer, allocators, residency set and atlases.
+/// four pipelines. Each view keeps its own layer, allocators, residency set and atlases.
 @MainActor
 public final class RenderContext {
     let device: MTLDevice
     let queue: MTL4CommandQueue
-    let bgPipeline, cellBgPipeline, textPipeline: MTLRenderPipelineState
+    let bgPipeline, cellBgPipeline, textPipeline, imagePipeline: MTLRenderPipelineState
 
     /// `metallib` is the compiled shader library, which the app finds in its bundle.
     public init(metallib: URL) throws(RendererError) {
         // The offsets Shaders.metal's structs have; Swift lays them out the same way.
         precondition(MemoryLayout<Uniforms>.offset(of: \Uniforms.gridPadding) == 96
                      && MemoryLayout<Uniforms>.offset(of: \Uniforms.bgColor) == 128
-                     && MemoryLayout<Uniforms>.size == 136 && MemoryLayout<CellText>.stride == 32)
+                     && MemoryLayout<Uniforms>.size == 136 && MemoryLayout<CellText>.stride == 32
+                     && MemoryLayout<ImageDraw>.stride == 40)
         guard let device = MTLCreateSystemDefaultDevice(), device.supportsFamily(.metal4) else { throw .noMetal4 }
         guard let queue = device.makeMTL4CommandQueue() else { throw .setup("a command queue") }
         (self.device, self.queue) = (device, queue)
@@ -39,5 +40,6 @@ public final class RenderContext {
         bgPipeline = try pipeline("full_screen_vertex", "bg_color_fragment", blend: false)
         cellBgPipeline = try pipeline("full_screen_vertex", "cell_bg_fragment", blend: true)
         textPipeline = try pipeline("cell_text_vertex", "cell_text_fragment", blend: true)
+        imagePipeline = try pipeline("image_vertex", "image_fragment", blend: true)
     }
 }

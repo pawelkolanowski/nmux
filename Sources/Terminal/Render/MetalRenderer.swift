@@ -60,8 +60,8 @@ final class MetalRenderer {
     /// Frames committed so far; frame n signals the event to n once it completes.
     private(set) var frames: UInt64 = 0
 #if NMUX_SELFTEST
-    /// Set for one frame: its pixels come back once it completed.
-    var readback: ((Readback) -> Void)?
+    /// Set for one frame: its pixels come back to each once it completed.
+    var readbacks: [(Readback) -> Void] = []
     /// A frame presented with the window's transaction that did not complete within 1000 ms.
     var onLate: () -> Void = {}
     private lazy var readbackAllocator = device.makeCommandAllocator()
@@ -75,11 +75,13 @@ final class MetalRenderer {
     private let event: MTLSharedEvent
     private let table: MTL4ArgumentTable
     private let residency: MTLResidencySet
-    private let bgPipeline, cellBgPipeline, textPipeline: MTLRenderPipelineState
+    private let bgPipeline, cellBgPipeline, textPipeline, imagePipeline: MTLRenderPipelineState
     private var slots: [Slot] = []
     /// The alpha atlas and the colour one.
     private var atlasTexture: MTLTexture?
     private var colorAtlasTexture: MTLTexture?
+    /// One texture per kitty image, by image id. A hidden Session keeps them.
+    private var imageTextures: [UInt32: MTLTexture] = [:]
     /// Textures and buffers replaced by larger ones, each kept until the last frame that read it completed.
     private var retired: [(resource: MTLAllocation, lastFrame: UInt64)] = []
 
@@ -88,12 +90,14 @@ final class MetalRenderer {
         var uniforms: MTLBuffer
         var bg: MTLBuffer
         var text: MTLBuffer
+        var images: MTLBuffer
     }
 
     init(_ context: RenderContext) throws(RendererError) {
         let device = context.device
         (self.device, queue) = (device, context.queue)
         (bgPipeline, cellBgPipeline, textPipeline) = (context.bgPipeline, context.cellBgPipeline, context.textPipeline)
+        imagePipeline = context.imagePipeline
         guard let commandBuffer = device.makeCommandBuffer(), let event = device.makeSharedEvent() else {
             throw .setup("a command buffer")
         }
@@ -105,8 +109,8 @@ final class MetalRenderer {
         }
         self.allocators = allocators
         let tableDescriptor = MTL4ArgumentTableDescriptor()
-        tableDescriptor.maxBufferBindCount = 3
-        tableDescriptor.maxTextureBindCount = 2
+        tableDescriptor.maxBufferBindCount = 4
+        tableDescriptor.maxTextureBindCount = 3
         do {
             table = try device.makeArgumentTable(descriptor: tableDescriptor)
             residency = try device.makeResidencySet(descriptor: MTLResidencySetDescriptor())
@@ -116,7 +120,7 @@ final class MetalRenderer {
 
         for _ in 0..<Self.framesInFlight {
             slots.append(Slot(uniforms: try buffer(MemoryLayout<Uniforms>.stride), bg: try buffer(4),
-                              text: try buffer(32)))
+                              text: try buffer(32), images: try buffer(MemoryLayout<ImageDraw>.stride)))
         }
         residency.commit()
 
@@ -150,15 +154,22 @@ final class MetalRenderer {
         release()
         let i = Int(frames % inFlight)
         syncAtlas(cells)
+        syncImages(cells.images)
         let count = cells.textCount
+        let images = cells.images.list
         grow(&slots[i].bg, cells.bg.count * 4)
         grow(&slots[i].text, count * MemoryLayout<CellText>.stride)
+        grow(&slots[i].images, images.placements.count * MemoryLayout<ImageDraw>.stride)
         residency.commit()
         let slot = slots[i]
         cells.bg.withUnsafeBytes {
             if let b = $0.baseAddress { slot.bg.contents().copyMemory(from: b, byteCount: $0.count) }
         }
         cells.writeText(slot.text.contents().bindMemory(to: CellText.self, capacity: max(count, 1)))
+        if !images.placements.isEmpty {
+            let draws = slot.images.contents().bindMemory(to: ImageDraw.self, capacity: images.placements.count)
+            for (n, placement) in images.placements.enumerated() { draws[n] = placement.draw }
+        }
         let size = layer.drawableSize
         let cell = cells.font.cell
         // The default background at `background-opacity`; a cell with its own background stays opaque.
@@ -194,19 +205,41 @@ final class MetalRenderer {
         table.setAddress(slot.text.gpuAddress, index: 0)
         table.setAddress(slot.uniforms.gpuAddress, index: 1)
         table.setAddress(slot.bg.gpuAddress, index: 2)
+        table.setAddress(slot.images.gpuAddress, index: 3)
         table.setTexture(atlasTexture!.gpuResourceID, index: 0)
         table.setTexture(colorAtlasTexture!.gpuResourceID, index: 1)
         enc.setArgumentTable(table, stages: [.vertex, .fragment])
         enc.setRenderPipelineState(bgPipeline)
         enc.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+        // Images overhang the grid freely, so each layer is clipped to it, and the rest of the pass is not.
+        let grid = MTLScissorRect(x: 0, y: 0, width: min(cells.cols * cell.width, Int(size.width)),
+                                  height: min(cells.rows * cell.height, Int(size.height)))
+        let whole = MTLScissorRect(x: 0, y: 0, width: Int(size.width), height: Int(size.height))
+        func drawImages(_ layer: ImageLayer) {
+            let range = images.range(layer)
+            guard !range.isEmpty, grid.width > 0, grid.height > 0 else { return }
+            enc.setRenderPipelineState(imagePipeline)
+            enc.setScissorRect(grid)
+            for n in range {
+                guard let texture = imageTextures[images.placements[n].image] else { continue }
+                table.setTexture(texture.gpuResourceID, index: 2)
+                enc.setArgumentTable(table, stages: [.vertex, .fragment])
+                enc.drawPrimitives(primitiveType: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: 1,
+                                   baseInstance: n)
+            }
+            enc.setScissorRect(whole)
+        }
+        drawImages(.belowBackground)
         if cells.cols > 0 && cells.rows > 0 {
             enc.setRenderPipelineState(cellBgPipeline)
             enc.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
         }
+        drawImages(.belowText)
         if count > 0 {
             enc.setRenderPipelineState(textPipeline)
             enc.drawPrimitives(primitiveType: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: count)
         }
+        drawImages(.aboveText)
         enc.endEncoding()
         commandBuffer.endCommandBuffer()
 
@@ -215,9 +248,10 @@ final class MetalRenderer {
         frames += 1
         queue.signalEvent(event, value: frames)
 #if NMUX_SELFTEST
-        if let readback {
-            self.readback = nil
-            if let pixels = read(drawable.texture) { readback(pixels) }
+        if !readbacks.isEmpty {
+            let readbacks = self.readbacks
+            self.readbacks = []
+            if let pixels = read(drawable.texture) { readbacks.forEach { $0(pixels) } }
         }
 #endif
         queue.signalDrawable(drawable)
@@ -232,12 +266,14 @@ final class MetalRenderer {
         return true
     }
 
-    /// Replaces the atlas textures by the next frame's: a new scale starts empty atlases. The old textures live until
-    /// the frames that read them completed.
+    /// Replaces the atlas textures by the next frame's: a new scale starts empty atlases, and new cells that upload
+    /// every image again. The old textures live until the frames that read them completed.
     func dropAtlas() {
         retire(atlasTexture)
         retire(colorAtlasTexture)
         (atlasTexture, colorAtlasTexture) = (nil, nil)
+        imageTextures.values.forEach { retire($0) }
+        imageTextures.removeAll()
     }
 
     private func retire(_ texture: MTLTexture?) {
@@ -288,6 +324,29 @@ final class MetalRenderer {
         sync(cells.atlas, &atlasTexture, .r8Unorm)
         sync(cells.colorAtlas, &colorAtlasTexture, .bgra8Unorm_srgb)
         cells.atlasUploaded()
+    }
+
+    /// Drops the textures of images that went and makes one for each image with new pixels, `rgba8Unorm_srgb` as
+    /// Ghostty's. A replaced texture lives until the frames that read it completed.
+    private func syncImages(_ images: Images) {
+        for id in images.gone { retire(imageTextures.removeValue(forKey: id)) }
+        for (id, image) in images.uploads {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm_srgb, width: image.width,
+                                                                      height: image.height, mipmapped: false)
+            descriptor.storageMode = .shared
+            descriptor.usage = .shaderRead
+            retire(imageTextures.removeValue(forKey: id))
+            // An image too large for a texture is left undrawn, as Ghostty's upload fails on it.
+            guard image.width > 0, image.height > 0, let texture = device.makeTexture(descriptor: descriptor)
+            else { continue }
+            image.rgba.withUnsafeBytes {
+                texture.replace(region: MTLRegionMake2D(0, 0, image.width, image.height), mipmapLevel: 0,
+                                withBytes: $0.baseAddress!, bytesPerRow: image.width * 4)
+            }
+            residency.addAllocation(texture)
+            imageTextures[id] = texture
+        }
+        images.uploaded()
     }
 
     private func sync(_ atlas: Atlas, _ current: inout MTLTexture?, _ format: MTLPixelFormat) {

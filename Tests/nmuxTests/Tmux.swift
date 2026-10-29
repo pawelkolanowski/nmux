@@ -40,6 +40,28 @@ struct TmuxTests {
         #expect(statusRows("") == 1)
     }
 
+    @Test("a set tmux-path that is executable is used as it is") func aSetTmuxPathIsUsedAsItIs() throws {
+        #expect(try tmuxPath("/x/tmux", loginAnswer: { Issue.record("looked up"); return nil }, known: ["/k"]) {
+            $0 == "/x/tmux"
+        } == "/x/tmux")
+    }
+
+    @Test("a set tmux-path that is missing names itself") func aSetTmuxPathThatIsMissingNamesItself() {
+        let failure = #expect(throws: AttachFailure.self) {
+            try tmuxPath("/x/tmux", loginAnswer: { "/l" }, known: ["/k"]) { _ in false }
+        }
+        #expect(failure?.log == "missing /x/tmux")
+    }
+
+    @Test("an empty tmux-path falls back to the login shell, then the known paths") func anEmptyTmuxPathFallsBack() throws {
+        #expect(try tmuxPath("", loginAnswer: { "/l" }, known: ["/k"]) { _ in true } == "/l")
+        #expect(try tmuxPath("", loginAnswer: { nil }, known: ["/k"]) { _ in true } == "/k")
+        let failure = #expect(throws: AttachFailure.self) {
+            try tmuxPath("", loginAnswer: { nil }, known: []) { _ in true }
+        }
+        #expect(failure?.log == "missing")
+    }
+
     @Test("brew is looked up at its known paths in order") func brewIsLookedUpAtItsKnownPaths() {
         #expect(pickExecutable(loginAnswer: nil, known: knownBrewPaths) { _ in true } == "/opt/homebrew/bin/brew")
     }

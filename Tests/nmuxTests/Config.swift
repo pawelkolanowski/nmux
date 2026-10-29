@@ -3,7 +3,7 @@ import Testing
 @testable import nmux
 @testable import Terminal
 
-// The config: Ghostty's syntax, eleven keys with their defaults, and every skipped line with its number and reason.
+// The config: Ghostty's syntax, fourteen keys with their defaults, and every skipped line with its number and reason.
 private func problems(_ text: String) -> [ConfigProblem] { parseConfig(text).1 }
 private func reasons(_ text: String) -> [String] { problems(text).map(\.reason) }
 private let mixed = "pill-width = 200\nfont-szie = 16\nstray\n# c\npill-width = 900\nfont-size = 16"
@@ -49,6 +49,9 @@ struct ConfigTests {
             "copy-on-select=false",
             "clipboard-write=allow",
             "clipboard-read=ask",
+            "tmux-path=",
+            "tmux-command=set -g mouse on ; set -g set-clipboard on ; set -g allow-passthrough on",
+            "image-storage-limit=320000000",
         ])
     }
 
@@ -110,6 +113,21 @@ struct ConfigTests {
         #expect(parsed("theme = /t/x").theme == "/t/x")
     }
 
+    @Test("tmux-path keeps its text, and empty looks tmux up") func tmuxPathKeepsItsText() {
+        #expect(parsed("tmux-path = /opt/t/tmux").tmuxPath == "/opt/t/tmux")
+        #expect(parsed("tmux-path = /opt/t/tmux\ntmux-path =").tmuxPath == "")
+    }
+
+    @Test("tmux-command keeps ;, quotes and \\; as written") func tmuxCommandKeepsItsText() {
+        let command = #"set -g status-left "a ; b" \; set -g status off ; bind x 'kill-pane'"#
+        #expect(parsed("tmux-command = \(command)").tmuxCommand == command)
+        #expect(problems("tmux-command = \(command)").isEmpty)
+    }
+
+    @Test("an empty tmux-command brings the default back") func anEmptyTmuxCommandBringsTheDefault() {
+        #expect(parsed("tmux-command = set -g status off\ntmux-command =").tmuxCommand == Config().tmuxCommand)
+    }
+
     @Test("font-size takes a number above 0") func fontSizeTakesANumberAbove0() {
         #expect(parsed("font-size = 13.5").fontSize == 13.5)
         #expect(reasons("font-size = 0") == ["expects a number above 0"])
@@ -136,6 +154,17 @@ struct ConfigTests {
         #expect(parsed("pill-width = 400").pillWidth == 400)
         #expect(reasons("pill-width = 59\npill-width = 401")
             == ["expects a number from 60 to 400", "expects a number from 60 to 400"])
+    }
+
+    @Test("image-storage-limit takes whole bytes from 0 to 4294967295, and empty brings 320 MB back")
+    func imageStorageLimitTakesWholeBytes() {
+        #expect(Config().imageStorageLimit == 320_000_000)
+        #expect(parsed("image-storage-limit = 1000").imageStorageLimit == 1000)
+        #expect(parsed("image-storage-limit = 0").imageStorageLimit == 0)
+        #expect(parsed("image-storage-limit = 4294967295").imageStorageLimit == UInt32.max)
+        #expect(parsed("image-storage-limit = 0\nimage-storage-limit =").imageStorageLimit == 320_000_000)
+        #expect(reasons("image-storage-limit = -1\nimage-storage-limit = 1.5\nimage-storage-limit = 4294967296")
+            == Array(repeating: "expects a number of bytes from 0 to 4294967295", count: 3))
     }
 
     @Test("background-opacity clamps to 0 to 1") func backgroundOpacityClampsTo0To1() {

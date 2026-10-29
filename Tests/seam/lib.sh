@@ -22,7 +22,9 @@
 # On its own, the self-test:
 #   - logs the bytes parsed each time output settles for 0.4 s; the first time, it probes the terminal.
 #   - asks every 0.1 s whether a hold still stands.
-#   - logs the named cells, the rows the last rebuild shaped and the cursor each time the frames settle for 0.4 s.
+#   - logs the named cells, the rows the last rebuild shaped and the cursor each time the frames settle for 0.4 s, and
+#     reads one frame back to log `pixel <x>,<y> <rrggbb>` for each named cell, the colour at its centre with the alpha
+#     divided out. That frame counts as no settle of its own.
 #   - reads one frame back the first time the first named cell holds a glyph, again after each commit, and after each
 #     switch of Session. It watches every Session's view and acts on the shown one.
 #   - logs `selection <x0>,<y0>-<x1>,<y1>` or `selection none` for each settled frame whose selection differs from the
